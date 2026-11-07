@@ -1,0 +1,3 @@
+#pragma once
+extern unsigned test_requested_height;
+#define CONFIG_TAB5_VIDEO_PROFILE_HEIGHT test_requested_height

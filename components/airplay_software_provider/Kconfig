@@ -1,0 +1,5 @@
+menu "Wired AirPlay"
+config AIRPLAY_PAIRING_CODE
+    string "Pair-Setup code"
+    default "3939"
+endmenu

@@ -1,0 +1,31 @@
+menu "CarPlay Tab5 bring-up"
+config TAB5_DISPLAY_TEST
+    bool "Start BSP display and touch diagnostic"
+    default y
+config TAB5_AUDIO_TEST
+    bool "Play quiet test tone and sample microphone at boot"
+    default n
+endmenu
+
+config TAB5_OFFLINE_DEMO
+    bool "Offline synthetic media demo (USB disabled)"
+    default n
+    depends on TAB5_DISPLAY_TEST
+    help
+        Exercises video decode/display and local touch feedback with a synthetic
+        High Profile fixture. Does not initialize USB or pair with any phone.
+
+config TAB5_VIDEO_PROFILE_HEIGHT
+    int "Requested CarPlay video height (192, 240, 288, 360, 384, 480 or 576)"
+    default 240
+    help
+        A new value starts one trial. If the stream cannot keep up, or the trial
+        ends before it is judged, the firmware returns to 1024x192.
+
+config TAB5_IAP2_NCM_INTERFACE
+    int "Verified phone NCM control interface (-1 = unconfigured)"
+    range -1 255
+    default -1
+    help
+        Identification profile for the intended iPhone USB NCM configuration.
+        Must be established from descriptors; the S3 default is not assumed.

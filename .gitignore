@@ -1,0 +1,24 @@
+# Build output and fetched dependencies
+/build/
+/build-*/
+/managed_components/
+/external/
+/sdkconfig
+/sdkconfig.old
+/sdkconfig.*
+!/sdkconfig.defaults
+__pycache__/
+*.dSYM/
+.DS_Store
+
+# Local-only material: identity, device logs, recordings, references, unrelated outputs
+/secrets/
+/artifacts/
+/reference/
+/outputs/
+*.apk
+*.pk8
+*.p7b
+*.der
+*.pem
+*.key

@@ -1,0 +1,17 @@
+{
+  "Carplay-S3": {
+    "commit": "79a9f169f275b283f2909c5a326ed03c716c0d02"
+  },
+  "esp-bsp-reference": {
+    "commit": "67f41a169401d1f23e827188dd08fb351cb0febe"
+  },
+  "esp-idf": {
+    "commit": "2c211b236707889e8400c4dc5644dd5c4ee071e0"
+  },
+  "actual-build": {
+    "bsp": "registry espressif/m5stack_tab5 1.3.2",
+    "lvgl": "9.3.0",
+    "esp_lvgl_port": "2.6.2",
+    "lock": "dependencies.lock"
+  }
+}
