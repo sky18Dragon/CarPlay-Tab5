@@ -20,3 +20,12 @@ target_compile_definitions(test_crypto PRIVATE CONFIG_MBEDTLS_CHACHAPOLY_C=1 CON
 target_compile_options(test_crypto PRIVATE -Wall -Wextra -Werror -UNDEBUG -fsanitize=address,undefined)
 target_link_options(test_crypto PRIVATE -fsanitize=address,undefined)
 target_link_libraries(test_crypto PRIVATE mbedcrypto)
+
+add_executable(test_audio_packet test_audio_packet.c
+ "${root}/components/airplay_session/airplay_audio_packet.c"
+ "${root}/main/core/pcm_buffer.c")
+target_include_directories(test_audio_packet PRIVATE
+ "${root}/components/airplay_session/include" "${root}/main/core")
+target_compile_options(test_audio_packet PRIVATE -Wall -Wextra -Werror -UNDEBUG -fsanitize=address,undefined)
+target_link_options(test_audio_packet PRIVATE -fsanitize=address,undefined)
+target_link_libraries(test_audio_packet PRIVATE mbedcrypto)

@@ -23,6 +23,25 @@ int main(void)
     cp_pcm_reset(&p,8); assert(!p.queued && !p.playing);
     assert(cp_pcm_read(&p,7,out,8)==0);
     assert(!cp_pcm_push(&p,8,0,data,3,false));
+    /* Paused RTP timestamps must recover after sustained empty playback. */
+    for(unsigned rate_index=0;rate_index<2;++rate_index) {
+        unsigned rate=rate_index?44100:48000;
+        assert(cp_pcm_init(&p,samples,valid,8,rate,1,4)); cp_pcm_reset(&p,9);
+        assert(cp_pcm_push(&p,9,100,data,8,true));
+        assert(cp_pcm_read(&p,9,out,4)==4 && p.playing);
+        assert(cp_pcm_read(&p,9,out,2)==0 && p.anchored && !p.rebuffer_count);
+        assert(cp_pcm_push(&p,9,106,data,8,true));
+        assert(cp_pcm_read(&p,9,out,4)==4 && !p.starvation_frames);
+        for(unsigned i=0;i<rate/10/8+1;++i) assert(cp_pcm_read(&p,9,out,8)==0);
+        assert(!p.anchored && !p.playing && !p.queued && p.rebuffer_count==1);
+        assert(cp_pcm_push(&p,9,110,data,4,true));
+        assert(cp_pcm_read(&p,9,out,2)==0); /* new preroll is required */
+        assert(cp_pcm_push(&p,9,112,data+4,4,true));
+        assert(cp_pcm_read(&p,9,out,4)==4);
+        for(unsigned i=0;i<8;i+=2) assert(out[i]==data[i+1] && out[i+1]==data[i]);
+        assert(!cp_pcm_push(&p,8,114,data,4,true)); /* stale session */
+        cp_pcm_reset(&p,10); assert(!p.rebuffer_count && !p.underrun_frames);
+    }
     cp_video_queue q; uint8_t memory[16]; cp_video_unit unit;
     assert(cp_video_init(&q,memory,sizeof(memory))); cp_video_reset(&q,1);
     assert(cp_video_take_idr_request(&q) && !cp_video_take_idr_request(&q));

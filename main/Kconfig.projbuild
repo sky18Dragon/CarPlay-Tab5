@@ -5,6 +5,13 @@ config TAB5_DISPLAY_TEST
 config TAB5_AUDIO_TEST
     bool "Play quiet test tone and sample microphone at boot"
     default n
+config TAB5_AUDIO_VOLUME
+    int "CarPlay speaker output volume (percent)"
+    range 0 100
+    default 30
+    help
+        Local playback volume applied when a PCM stream opens. Zero is silent.
+        This does not implement phone volume commands or multiple-stream mixing.
 endmenu
 
 config TAB5_OFFLINE_DEMO

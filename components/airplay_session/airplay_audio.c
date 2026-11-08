@@ -3,7 +3,7 @@
 #include "airplay_audio_sink.h"
 #include "airplay_pair_verify.h"
 #include "net_port.h"
-#include "mbedtls/chachapoly.h"
+#include "airplay_audio_packet.h"
 #include "mbedtls/platform_util.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -25,7 +25,7 @@ typedef struct {
     uint8_t key[32];
     uint16_t data_port,control_port,last_seq;
     bool have_seq;
-    uint32_t packets,bytes,bad,lost,reordered,crc;
+    uint32_t packets,bytes,bad,lost,reordered,crc,auth_errors,format_errors,sink_drops;
     int peak;
 } audio_slot_t;
 static audio_slot_t slots[AUDIO_SLOTS];
@@ -63,18 +63,17 @@ static void clear(audio_slot_t *s) {
     mbedtls_platform_zeroize(s,sizeof(*s));
 }
 static void consume(audio_slot_t *s,int n) {
-    if (n<36 || (packet[0]>>6)!=2 || (packet[0]&0x3f)) { ++s->bad; return; }
-    size_t size=(size_t)n-36;
-    if (!size || size%(s->channels*2)) { ++s->bad; return; }
-    uint8_t nonce[12]={0}; memcpy(nonce+4,packet+n-8,8);
-    mbedtls_chachapoly_context ctx;
-    mbedtls_chachapoly_init(&ctx);
-    int result=mbedtls_chachapoly_setkey(&ctx,s->key);
-    if (!result) result=mbedtls_chachapoly_auth_decrypt(&ctx,size,nonce,packet+4,8,
-        packet+n-24,packet+12,packet+12);
-    mbedtls_chachapoly_free(&ctx);
-    if (result) { ++s->bad; return; }
-    uint16_t seq=(uint16_t)((packet[2]<<8)|packet[3]);
+    airplay_audio_packet decoded;
+    airplay_audio_packet_result result=airplay_audio_packet_decode(
+        s->key,s->channels,packet,(size_t)n,&decoded);
+    if (result!=AIRPLAY_AUDIO_PACKET_OK) {
+        ++s->bad;
+        if (result==AIRPLAY_AUDIO_PACKET_AUTH_ERROR) ++s->auth_errors;
+        else ++s->format_errors;
+        return;
+    }
+    size_t size=decoded.size;
+    uint16_t seq=decoded.sequence;
     if (s->have_seq) {
         int16_t delta=(int16_t)(seq-s->last_seq);
         if (delta<=0) { ++s->reordered; }
@@ -82,8 +81,8 @@ static void consume(audio_slot_t *s,int n) {
     }
     if(!s->have_seq || (uint16_t)(seq-s->last_seq)<0x8000) s->last_seq=seq;
     s->have_seq=true;
-    uint32_t timestamp=((uint32_t)packet[4]<<24)|((uint32_t)packet[5]<<16)|((uint32_t)packet[6]<<8)|packet[7];
-    if(!sink.write(s->sink_generation,timestamp,packet+12,size)) { ++s->bad; return; }
+    uint32_t timestamp=decoded.timestamp;
+    if(!sink.write(s->sink_generation,timestamp,decoded.pcm,size)) { ++s->sink_drops; return; }
     ++s->packets; s->bytes+=size;
     s->crc=esp_rom_crc32_le(s->crc,packet+12,size);
     // DiPlay byteSwapS16 converts this network-order LPCM to native little endian.
@@ -111,8 +110,8 @@ static void task(void *arg) {
             }
             for (unsigned burst=0;burst<4;++burst) if (recv(s->control,packet,4096,MSG_DONTWAIT)<=0) break;
             if (xTaskGetTickCount()-last>=pdMS_TO_TICKS(3000)) {
-                ESP_LOGI("AUDIO","PCM type=%u usage=%s packets=%lu bytes=%lu auth_or_format_errors=%lu lost=%lu reordered=%lu peak=%d crc=%08lx sink=pcm_playback",
-                    s->type,s->usage,(unsigned long)s->packets,(unsigned long)s->bytes,(unsigned long)s->bad,
+                ESP_LOGI("AUDIO","PCM type=%u usage=%s packets=%lu bytes=%lu auth_errors=%lu format_errors=%lu sink_drops=%lu lost=%lu reordered=%lu peak=%d crc=%08lx sink=pcm_playback",
+                    s->type,s->usage,(unsigned long)s->packets,(unsigned long)s->bytes,(unsigned long)s->auth_errors,(unsigned long)s->format_errors,(unsigned long)s->sink_drops,
                     (unsigned long)s->lost,(unsigned long)s->reordered,s->peak,(unsigned long)s->crc);
             }
         }
@@ -125,7 +124,10 @@ bool airplay_audio_start(const airplay_rtsp_pairing_t *pairing,
     const airplay_bplist_doc_t *doc,airplay_bplist_object_t stream,airplay_stream_ports_t *ports) {
     uint64_t type,id,format;
     if (!number(doc,stream,"type",&type) || type!=100 ||
-        !number(doc,stream,"streamConnectionID",&id) || !number(doc,stream,"audioFormat",&format)) return false;
+        !number(doc,stream,"streamConnectionID",&id) || !number(doc,stream,"audioFormat",&format)) {
+        ESP_LOGW("AUDIO","SETUP rejected: missing fields or unsupported stream type (PCM type 100 required)");
+        return false;
+    }
     const unsigned rates[]={8000,16000,24000,32000,44100,48000};
     const uint64_t mono[]={0x4,0x10,0x40,0x100,0x400,0x4000};
     unsigned rate=0,channels=0;
@@ -133,7 +135,12 @@ bool airplay_audio_start(const airplay_rtsp_pairing_t *pairing,
         if (format==mono[i]) { rate=rates[i]; channels=1; }
         if (format==mono[i]*2) { rate=rates[i]; channels=2; }
     }
-    if (!sink_installed || (rate!=44100 && rate!=48000)) return false; // Only formats advertised in /info; never interpret compressed bytes as PCM.
+    if (!sink_installed || (rate!=44100 && rate!=48000)) {
+        ESP_LOGW("AUDIO","SETUP rejected: sink=%d format=0x%llx rate=%u channels=%u",sink_installed,
+            (unsigned long long)format,rate,channels);
+        return false;
+    } // Only formats advertised in /info; never interpret compressed bytes as PCM.
+    ESP_LOGI("AUDIO","SETUP requested type=%u rate=%u channels=%u",(unsigned)type,rate,channels);
     char usage[32]="default";
     airplay_bplist_object_t value; size_t length;
     if (airplay_bplist_dict_get(doc,stream,"audioType",&value)==AIRPLAY_BPLIST_OK &&
@@ -169,7 +176,7 @@ bool airplay_audio_start(const airplay_rtsp_pairing_t *pairing,
     s->type=type; s->id=id; s->format=format; s->rate=rate; s->channels=channels;
     memcpy(s->usage,usage,sizeof(usage));
     s->sink_generation=sink.open(rate,channels);
-    if(!s->sink_generation) { clear(s); goto failed; }
+    if(!s->sink_generation) { ESP_LOGW("AUDIO","SETUP rejected: output busy or codec open failed"); clear(s); goto failed; }
     ESP_LOGI("AUDIO","ready type=%u usage=%s rate=%u channels=%u data=%u control=%u sink=pcm_playback",
         s->type,s->usage,rate,channels,s->data_port,s->control_port);
 ready:
