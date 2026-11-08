@@ -19,6 +19,9 @@ void tab5_audio_stop(unsigned lane,uint64_t generation);
 void tab5_audio_stop_all(void);
 /* Copies authenticated PCM into the lane's jitter buffer; waits at most a few ms for the lock. */
 bool tab5_audio_submit(unsigned lane,uint64_t generation,uint32_t timestamp,const uint8_t *,size_t,bool big_endian);
+/* Speaker volume 0-100, applied by the audio worker within 10 ms. */
+void tab5_audio_set_volume(int percent);
+int tab5_audio_volume(void);
 /* Lowers lane 0 while a navigation prompt plays. */
 void tab5_audio_duck(bool ducked);
 /* Microphone: reference counted; samples are 48 kHz mono averaged from both mics. */

@@ -18,7 +18,7 @@
 #define PREROLL_MS 60u
 #define MIC_RING_SAMPLES 9600u           /* 200 ms at 48 kHz mono */
 #define MIC_READ_MAX 2880u               /* 60 ms at 48 kHz */
-#define SPEAKER_VOLUME 30
+#define SPEAKER_VOLUME_DEFAULT 30
 #define MIC_GAIN_DB 30.0f
 #define DUCK_GAIN_Q8 77                  /* about 30 % */
 #define IDLE_CLOSE_BLOCKS 300u           /* close the codecs after 3 s of nothing */
@@ -43,6 +43,7 @@ static size_t mic_head, mic_count;
 static int mic_peak;
 static esp_codec_dev_handle_t speaker, microphone;
 static bool codec_open;
+static volatile int volume = SPEAKER_VOLUME_DEFAULT, applied_volume = -1;
 
 static bool rate_supported(uint32_t rate)
 {
@@ -58,7 +59,8 @@ static esp_err_t open_codecs(void)
         ESP_LOGE(TAG, "speaker open failed");
         return ESP_FAIL;
     }
-    if (esp_codec_dev_set_out_vol(speaker, SPEAKER_VOLUME) != ESP_CODEC_DEV_OK ||
+    applied_volume = volume;
+    if (esp_codec_dev_set_out_vol(speaker, applied_volume) != ESP_CODEC_DEV_OK ||
         esp_codec_dev_open(microphone, &fmt) != ESP_CODEC_DEV_OK) {
         ESP_LOGE(TAG, "microphone open failed");
         esp_codec_dev_close(speaker);
@@ -66,7 +68,7 @@ static esp_err_t open_codecs(void)
     }
     (void)esp_codec_dev_set_in_gain(microphone, MIC_GAIN_DB);
     codec_open = true;
-    ESP_LOGI(TAG, "codecs open: 48 kHz stereo duplex, volume=%d mic_gain=%.1f dB", SPEAKER_VOLUME, (double)MIC_GAIN_DB);
+    ESP_LOGI(TAG, "codecs open: 48 kHz stereo duplex, volume=%d mic_gain=%.1f dB", applied_volume, (double)MIC_GAIN_DB);
     return ESP_OK;
 }
 
@@ -123,6 +125,10 @@ static void worker(void *arg)
             idle = 0;
         }
         if (!want && ++idle > IDLE_CLOSE_BLOCKS) { close_codecs(); continue; }
+        if (applied_volume != volume) {
+            applied_volume = volume;
+            (void)esp_codec_dev_set_out_vol(speaker, applied_volume);
+        }
         if (want) idle = 0;
 
         memset(mix, 0, CP_AUDIO_BLOCK_FRAMES * 2u * sizeof(int32_t));
@@ -258,6 +264,13 @@ bool tab5_audio_submit(unsigned lane, uint64_t generation, uint32_t timestamp, c
     xSemaphoreGive(lock);
     return ok;
 }
+
+void tab5_audio_set_volume(int percent)
+{
+    volume = percent < 0 ? 0 : percent > 100 ? 100 : percent;
+}
+
+int tab5_audio_volume(void) { return volume; }
 
 void tab5_audio_duck(bool on)
 {

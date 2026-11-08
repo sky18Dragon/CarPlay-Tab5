@@ -48,10 +48,12 @@ def normalize(d):
             entry['audioType'] = usage
         latencies.append(entry)
     d['audioLatencies'] = latencies
-    # No OEM-menu action exists in this application yet.
-    for key in ('oemIcons', 'oemIconLabel'):
-        d.pop(key, None)
-    d['oemIconVisible'] = False
+    # CarPlay home-screen icon; tapping it sends requestUI, which opens the
+    # local settings page (volume, brightness).
+    d['oemIconVisible'] = True
+    d['oemIconLabel'] = 'Tab5 设置'
+    d['oemIcons'] = [dict(imageData=(ASSETS / 'oem_settings.png').read_bytes(),
+                          widthPixels=128, heightPixels=128, prerendered=True)]
     return d
 
 def main():
@@ -67,7 +69,7 @@ def main():
             assert len(path.read_bytes()) <= 3500  # AIRPLAY_RTSP_SESSION_INFO_MAX_BYTES
         else:
             path.write_bytes(plistlib.dumps(expected, fmt=plistlib.FMT_BINARY, sort_keys=False))
-    print('Tab5 capability templates: single screen, PCM with microphone input, no OEM menu')
+    print('Tab5 capability templates: single screen, PCM with microphone input, settings icon')
 
 if __name__ == '__main__':
     main()
