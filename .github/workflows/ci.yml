@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cli:
+    name: CLI validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate scripts and whitespace
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: ./scripts/check_cli.sh
+      - name: Validate Actions workflows and embedded shell
+        run: >-
+          docker run --rm -v "$PWD:/repo" -w /repo
+          rhysd/actionlint:1.7.7 -color
+
+  host:
+    name: Host tests (ASan + UBSan)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      CC: clang
+      CXX: clang++
+      ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: ./scripts/test_host.sh
+
+  firmware:
+    name: ESP32-P4 build and regressions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    container: espressif/idf:v5.5.3
+    defaults:
+      run:
+        shell: bash
+    env:
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Fetch verified decoder sources
+        run: python3 scripts/fetch_openh264.py
+      - name: Build firmware without local identity material
+        run: |
+          . "$IDF_PATH/export.sh"
+          ./scripts/build.sh
+      - name: Decoder regression
+        run: |
+          . "$IDF_PATH/export.sh"
+          ./scripts/test_decoder.sh
+      - name: Crypto regression
+        run: |
+          . "$IDF_PATH/export.sh"
+          ./scripts/test_crypto.sh
+
+  gate:
+    name: Required CI
+    if: ${{ always() }}
+    needs: [cli, host, firmware]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every check to pass
+        env:
+          CLI_RESULT: ${{ needs.cli.result }}
+          HOST_RESULT: ${{ needs.host.result }}
+          FIRMWARE_RESULT: ${{ needs.firmware.result }}
+        run: |
+          test "$CLI_RESULT" = success
+          test "$HOST_RESULT" = success
+          test "$FIRMWARE_RESULT" = success
