@@ -17,8 +17,9 @@ def normalize(d):
     d['hidDevices'][0]['name'] = 'Tab5 touchscreen'
     d['extendedFeatures'] = [x for x in d.get('extendedFeatures', []) if x != 'vocoderInfo']
     d['audioFormats'] = [dict(type=100, audioType=usage, audioOutputFormats=FORMATS)
-                         for usage in ('default', 'media', 'alert')]
-    d['audioLatencies'] = [dict(type=100, audioType=usage, inputLatencyMicros=0,
+                         for usage in ('compatibility', 'default', 'media', 'alert')]
+    # Keep the type-only fallback used by the upstream wired receiver.
+    d['audioLatencies'] = [dict(type=100, inputLatencyMicros=0, outputLatencyMicros=60000)] + [dict(type=100, audioType=usage, inputLatencyMicros=0,
                                outputLatencyMicros=60000)
                           for usage in ('default', 'media', 'alert')]
     # No OEM-menu action exists in this application yet.
