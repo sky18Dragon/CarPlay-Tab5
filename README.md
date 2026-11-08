@@ -117,7 +117,7 @@ The per-frame CRC replay in `tools/perf/replay/` was checked against recorded iP
 - **Extra reject or IDR right after connecting (240 profiles).** Earlier runs sometimes showed one extra rejected frame and IDR in the first 1–2 s, seen as one stutter when video starts. It did not appear in the latest replug test. Not investigated.
 - **iPhone does not re-enumerate after a long USB-A power-off.** After the 5 V port is off for a long time, the iPhone needs a physical replug. Short power-offs and normal replugs recover in about 6 s.
 - **USB host assertion.** An assertion in `usb_dwc_hal_chan_decode_intr` occurred once under decoder overload. The cause is unknown, and it has not reappeared.
-- **Audio is unverified.** Media playback, Siri, phone calls and microphone uplink have not been checked on the device.
+- **Audio is unverified.** Media playback, Siri, phone calls and microphone uplink have not been checked on the device. See [Audio playback bring-up and diagnostics (Chinese)](docs/音频播放联调.md).
 - **Battery.** Runtime on a full charge has not been measured. The charge current is fixed at the 1000 mA step. There is no battery indicator or low-battery shutdown. The IP2326 status pin (P6) does not reliably show charging.
 - **Security.** NVS and flash encryption are off. The default AirPlay Pair-Setup code is `3939`. The experimental iAP2 identity can be extracted from the firmware.
 - **Compatibility.** Tested with one iPhone, iOS 16, on one Tab5 (P4 v1.3). It is wired only; wireless CarPlay is not implemented.

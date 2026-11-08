@@ -11,7 +11,8 @@ typedef struct {
     uint8_t *samples, *valid;
     size_t capacity, head, queued, preroll, frame_bytes;
     uint32_t cursor, sample_rate;
-    uint64_t generation, underrun_frames, rejected_packets;
+    uint64_t generation, underrun_frames, rejected_packets, rebuffer_count;
+    size_t starvation_frames;
     bool anchored, playing;
 } cp_pcm;
 bool cp_pcm_init(cp_pcm *, uint8_t *samples, uint8_t *valid, size_t capacity_frames,

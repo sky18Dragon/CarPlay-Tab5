@@ -44,9 +44,8 @@ static void reset_pairing_maintenance(void)
 static const char *TAG = "BRINGUP";
 
 #if CONFIG_TAB5_AUDIO_TEST
-static void audio_test(void *arg)
+static void audio_test(void)
 {
-    (void)arg;
     esp_codec_dev_handle_t speaker = bsp_audio_codec_speaker_init();
     esp_codec_dev_handle_t mic = bsp_audio_codec_microphone_init();
     esp_codec_dev_sample_info_t fmt = {.sample_rate = 48000, .channel = 2, .bits_per_sample = 16};
@@ -72,7 +71,6 @@ static void audio_test(void *arg)
         ESP_LOGI("MIC", "read=%s peak=%d (no recordings saved)", ok ? "OK" : "FAIL", peak);
         esp_codec_dev_close(mic);
     } else ESP_LOGE("MIC", "Microphone open failed");
-    vTaskDelete(NULL);
 }
 #endif
 void app_main(void)
@@ -83,6 +81,9 @@ void app_main(void)
     ESP_LOGI(TAG, "CarPlay-Tab5 offline development baseline | IDF %s | authentication requires provider", esp_get_idf_version());
     ESP_ERROR_CHECK(bsp_i2c_init());
     ESP_ERROR_CHECK(tab5_power_init());
+#if CONFIG_TAB5_AUDIO_TEST
+    audio_test(); /* Complete codec access before USB/CarPlay can start. */
+#endif
     ESP_ERROR_CHECK(tab5_audio_init());
     ESP_ERROR_CHECK(tab5_audio_routes_init());
 #if CONFIG_TAB5_DISPLAY_TEST
@@ -102,9 +103,6 @@ void app_main(void)
 #endif
 #if CONFIG_TAB5_OFFLINE_DEMO
     tab5_offline_demo_start();
-#endif
-#if CONFIG_TAB5_AUDIO_TEST
-    if (xTaskCreate(audio_test, "audio_test", 6144, NULL, 5, NULL) != pdPASS) abort();
 #endif
     for (unsigned tick = 1;; tick++) {
         if (tick % 6 == 0) tab5_power_log();
