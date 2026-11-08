@@ -493,6 +493,7 @@ static airplay_rtsp_session_result_t handle_setup(
                  (airplay_bplist_dict_get(&doc,entry,"streamConnectionID",&value)!=AIRPLAY_BPLIST_OK ||
                   airplay_bplist_get_uint(&doc,value,&id)!=AIRPLAY_BPLIST_OK)))
                 return status_response(request,400,"Bad Request",response,response_capacity,response_len);
+            ESP_LOGI(TAG,"SETUP_CANDIDATE type=%llu",(unsigned long long)type);
             if (type==100 || type==101 || type==110 || type==111) {
                 for (unsigned k=0;k<requested_count;++k) if (requested_ids[k]==id)
                     return status_response(request,400,"Bad Request",response,response_capacity,response_len);
