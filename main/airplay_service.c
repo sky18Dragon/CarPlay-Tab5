@@ -36,7 +36,7 @@ esp_err_t tab5_airplay_start(uint64_t generation)
 void tab5_airplay_stop(void)
 {
     if(server) { airplay_rtsp_server_stop(server); server=NULL; tab5_entropy_release(); }
-    airplay_audio_stop(0); tab5_audio_stop(); tab5_video_stop(); tab5_hid_reset(); owner=0;
+    airplay_audio_stop(0); tab5_audio_stop_all(); tab5_video_stop(); tab5_hid_reset(); owner=0;
 }
 uint16_t tab5_airplay_port(void) { return server?airplay_rtsp_server_get_port(server):0; }
 

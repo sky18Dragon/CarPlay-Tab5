@@ -101,4 +101,11 @@ airplay_pair_verify_result_t airplay_pair_verify_derive_screen_output_key(
     uint64_t stream_connection_id,
     uint8_t output_key[AIRPLAY_PAIR_VERIFY_KEY_BYTES]);
 
+/* Same HKDF as the output key, with the "DataStream-Input-Encryption-Key"
+ * label: seals the accessory-to-phone microphone stream. */
+airplay_pair_verify_result_t airplay_pair_verify_derive_stream_input_key(
+    const airplay_pair_verify_t *session,
+    uint64_t stream_connection_id,
+    uint8_t input_key[AIRPLAY_PAIR_VERIFY_KEY_BYTES]);
+
 void airplay_pair_verify_destroy(airplay_pair_verify_t *session);

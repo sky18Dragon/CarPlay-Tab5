@@ -26,6 +26,8 @@ cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -Imain main/co
 
 cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -Imain main/core/pcm_buffer.c main/core/video_queue.c tests/test_media_buffers.c -o artifacts/test_media_buffers
 ./artifacts/test_media_buffers
+cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -Imain main/core/audio_resample.c tests/test_audio_resample.c -o artifacts/test_audio_resample
+./artifacts/test_audio_resample
 cc -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -Imain -Imain/core main/core/pixel_convert.c tests/test_pixel_convert.c -o artifacts/test_pixel_convert
 ./artifacts/test_pixel_convert
 

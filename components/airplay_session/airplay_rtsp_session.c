@@ -4,6 +4,7 @@
  * RTSP session behavior follows DiPlay AirPlaySession.kt. Platform media,
  * event-socket, identity, and capability providers remain injected interfaces.
  */
+#include "airplay_audio.h"
 #include "airplay_rtsp_session.h"
 
 #include <stdlib.h>
@@ -324,6 +325,30 @@ static airplay_rtsp_session_result_t handle_teardown(
     session->timing_port = 0U;
     return status_response(request, AIRPLAY_RTSP_STATUS_OK, "OK",
                            response, response_capacity, response_len);
+}
+
+/* Diagnostics: the phone's command type and parameter names (no values). */
+static void log_command(const airplay_rtsp_request_t *request)
+{
+    airplay_bplist_doc_t doc;
+    airplay_bplist_object_t root, type, params;
+    char name[48] = "?";
+    char keys[160] = "";
+    size_t name_len = 0U;
+    if (airplay_bplist_open(request->body, request->body_len, &doc) != AIRPLAY_BPLIST_OK ||
+        airplay_bplist_root(&doc, &root) != AIRPLAY_BPLIST_OK) {
+        ESP_LOGI(TAG, "command type=unparsed bytes=%u", (unsigned)request->body_len);
+        return;
+    }
+    if (airplay_bplist_dict_get(&doc, root, "type", &type) == AIRPLAY_BPLIST_OK) {
+        (void)airplay_bplist_get_string(&doc, type, name, sizeof(name), &name_len);
+    }
+    if (airplay_bplist_dict_get(&doc, root, "params", &params) == AIRPLAY_BPLIST_OK) {
+        (void)airplay_bplist_dict_keys(&doc, params, keys, sizeof(keys));
+    }
+    ESP_LOGI(TAG, "command type=%s params=[%s] bytes=%u", name, keys, (unsigned)request->body_len);
+    if (!strcmp(name, "duckAudio")) airplay_audio_duck(true);
+    else if (!strcmp(name, "unduckAudio")) airplay_audio_duck(false);
 }
 
 static airplay_rtsp_session_result_t handle_setup(
@@ -823,6 +848,7 @@ airplay_rtsp_session_result_t airplay_rtsp_session_handle(
     if (strcmp(request->method,"POST")==0 && path_has_suffix(request->path,"/command")) {
         if (!session->control_cipher_active || !session->initial_setup_complete)
             return status_response(request,503U,"Service Unavailable",response,response_capacity,response_len);
+        log_command(request);
         if (airplay_host_ui_handle(request)) ESP_LOGI(TAG,"OEM requestUI queued for local menu");
         return status_response(request,200U,"OK",response,response_capacity,response_len);
     }

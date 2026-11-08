@@ -69,6 +69,21 @@ static void discover_transport(unsigned a) {
     if(rc==ESP_OK) { mux_address=session_address=a; tab5_session_attach(usbmux_epoch()); }
 }
 
+uint32_t tab5_usb_hal_recovered_errors(void);
+/* An NCM failure leaves the phone attached but silent. Power-cycle the root
+ * port briefly, as a replug would, at most 3 times a minute. */
+static void recover_ncm(unsigned a)
+{
+    static int64_t window_start; static unsigned recoveries;
+    const int64_t now=esp_timer_get_time();
+    if(now-window_start>60000000) { window_start=now; recoveries=0; }
+    if(recoveries>=3) { ESP_LOGE(TAG,"NCM failed again; recovery limit reached, replug the phone"); return; }
+    ++recoveries;
+    ESP_LOGW(TAG,"NCM link failed; re-enumerating the phone (recovery %u, usb_hal_recovered=%lu)",
+             recoveries,(unsigned long)tab5_usb_hal_recovered_errors());
+    if(usb_host_lib_set_root_port_power(false)==ESP_OK) { gone[a]=true; power_restore_at=now+500000; }
+}
+
 static void event_cb(const usb_host_client_event_msg_t *event, void *arg)
 {
     (void)arg;
@@ -109,7 +124,8 @@ void usb_probe_task(void *arg)
         if (esp_timer_get_time() >= status_at) {
             unsigned active = 0;
             for (unsigned i = 1; i < 128; ++i) active += devices[i] != NULL;
-            ESP_LOGI(TAG, "STATUS active=%u connected=%u disconnected=%u", active, connected_count, disconnected_count);
+            ESP_LOGI(TAG, "STATUS active=%u connected=%u disconnected=%u usb_hal_recovered=%lu", active, connected_count, disconnected_count,
+                     (unsigned long)tab5_usb_hal_recovered_errors());
             ESP_LOGI("USBMUX", "STATUS %s", usbmux_status());
             status_at = esp_timer_get_time() + 10000000;
         }
@@ -153,7 +169,7 @@ void usb_probe_task(void *arg)
             }
             if (devices[a]) { usb_config_scan_poll(a); discover_transport(a); }
             if (mux_address == a) usbmux_poll();
-            if (ncm_address == a) ncm_host_poll();
+            if (ncm_address == a) { ncm_host_poll(); if (ncm_host_take_fault()) recover_ncm(a); }
             if (!pending[a] || devices[a] || session_stopping) continue;
             pending[a] = false;
             err = usb_host_device_open(client, a, &devices[a]);

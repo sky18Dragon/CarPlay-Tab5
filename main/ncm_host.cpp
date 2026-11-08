@@ -21,6 +21,7 @@ esp_netif_t *netif;
 usb_transfer_t *rx,*tx,*status,*control;
 bool rx_busy,tx_busy,status_busy,control_busy,rx_done,tx_done,status_done,control_done;
 bool control_claimed,data_claimed,failed;
+static std::atomic<bool> fault; /* a running link failed; the probe re-enumerates */
 std::atomic<bool> attached{false},started{false};
 uint8_t control_interface,data_interface,data_alt,ep_in,ep_out,ep_status,mac_index;
 uint16_t in_mps,out_mps,status_mps,sequence;
@@ -179,7 +180,7 @@ void ncm_host_poll() {
         if (status->status==USB_TRANSFER_STATUS_COMPLETED && status->actual_num_bytes>=8)
             ESP_LOGI(tag,"NOTIFICATION type=%02x value=%u",status->data_buffer[1],ncm::le16(status->data_buffer+2));
     }
-    if (failed) { ncm_host_disconnect(); return; }
+    if (failed) { if (attached) fault=true; ncm_host_disconnect(); return; }
     if (!started) return;
     if (!rx_busy) { esp_err_t e=usb_host_transfer_submit(rx); rx_busy=e==ESP_OK; if (e!=ESP_OK) failed=true; }
     if (status && !status_busy) { esp_err_t e=usb_host_transfer_submit(status); status_busy=e==ESP_OK; }
@@ -211,6 +212,7 @@ void ncm_host_disconnect() {
     }
     if(output) xQueueReset(output);
 }
+bool ncm_host_take_fault() { return fault.exchange(false); }
 bool ncm_host_drained() { return !rx_busy && !tx_busy && !status_busy && !control_busy; }
 void ncm_host_release() {
     if (!ncm_host_drained()) return;

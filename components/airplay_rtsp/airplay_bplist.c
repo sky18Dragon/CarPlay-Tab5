@@ -292,6 +292,39 @@ airplay_bplist_result_t airplay_bplist_dict_get(
     return AIRPLAY_BPLIST_NOT_FOUND;
 }
 
+airplay_bplist_result_t airplay_bplist_dict_keys(
+    const airplay_bplist_doc_t *doc,
+    airplay_bplist_object_t dictionary,
+    char *output,
+    size_t capacity)
+{
+    if (output == NULL || capacity == 0U) return AIRPLAY_BPLIST_INVALID_ARGUMENT;
+    output[0] = '\0';
+    bplist_object_info_t info;
+    airplay_bplist_result_t result = resolve_object(doc, dictionary, &info);
+    if (result != AIRPLAY_BPLIST_OK) return result;
+    if (info.type != 0x0dU) return AIRPLAY_BPLIST_WRONG_TYPE;
+    size_t used = 0U;
+    for (uint64_t i = 0U; i < info.count; ++i) {
+        airplay_bplist_object_t key_object;
+        result = read_reference(doc,
+                                info.payload_offset + (size_t)i * doc->reference_size,
+                                &key_object);
+        if (result != AIRPLAY_BPLIST_OK) return result;
+        char key[48];
+        size_t key_len = 0U;
+        if (airplay_bplist_get_string(doc, key_object, key, sizeof(key), &key_len) != AIRPLAY_BPLIST_OK) {
+            continue;
+        }
+        if (used + key_len + 2U > capacity) return AIRPLAY_BPLIST_OUTPUT_TOO_SMALL;
+        if (used) output[used++] = ',';
+        memcpy(output + used, key, key_len);
+        used += key_len;
+        output[used] = '\0';
+    }
+    return AIRPLAY_BPLIST_OK;
+}
+
 airplay_bplist_result_t airplay_bplist_get_main_display_size(
     const airplay_bplist_doc_t *doc,
     uint16_t *width_pixels,

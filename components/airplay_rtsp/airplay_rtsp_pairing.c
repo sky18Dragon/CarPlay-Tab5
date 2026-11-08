@@ -196,6 +196,16 @@ airplay_pair_verify_result_t airplay_rtsp_pairing_derive_screen_output_key(
         session->pair_verify, stream_connection_id, output_key);
 }
 
+airplay_pair_verify_result_t airplay_rtsp_pairing_derive_stream_input_key(
+    const airplay_rtsp_pairing_t *session,
+    uint64_t stream_connection_id,
+    uint8_t input_key[AIRPLAY_PAIR_VERIFY_KEY_BYTES])
+{
+    if (session == NULL) return AIRPLAY_PAIR_VERIFY_INVALID_ARGUMENT;
+    return airplay_pair_verify_derive_stream_input_key(
+        session->pair_verify, stream_connection_id, input_key);
+}
+
 void airplay_rtsp_pairing_destroy(airplay_rtsp_pairing_t *session)
 {
     if (session == NULL) return;

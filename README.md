@@ -8,7 +8,7 @@ A wired Apple CarPlay receiver that runs on the M5Stack Tab5 (ESP32-P4). The iPh
 
 ## Status
 
-Current firmware (2026-11-08): 890×240 at 16 fps, with battery charging enabled.
+Current firmware (2026-11-08): 890×240 at 16 fps, with battery charging, CarPlay audio and microphone.
 
 | Item | State |
 |---|---|
@@ -18,7 +18,9 @@ Current firmware (2026-11-08): 890×240 at 16 fps, with battery charging enabled
 | Touch (HID digitizer) | Works; the user confirmed tap positions on the device |
 | Physical replug | Recovers in about 6 s, no heap leak |
 | Battery charging and running on battery | Charges at about 950 mA; keeps running after USB-C is unplugged |
-| Audio (media, Siri, calls, microphone) | **Not verified on the device** |
+| Music on the Tab5 speaker | Works (48 kHz stereo PCM, 0 underruns, 0 lost packets in testing) |
+| Siri (Tab5 microphone and speaker) | Works; the user confirmed Siri understood and answered |
+| Navigation prompts, phone calls | Not verified on the device |
 
 Measured over a 10-minute simulated drag at 890×240@16:
 
@@ -50,6 +52,8 @@ iPhone ──USB──> NCM network ──TCP──> RTSP / screen stream
 - **Frame-level pipeline.** Core 1 parses the next frame while core 0 reconstructs the previous one. The pipeline uses two macroblock array sets and two stage contexts. Anything unusual, such as multiple slices or errors, drains the pipeline and falls back to the upstream path.
 - **PIE SIMD.** Packing into the PPA YUV420 layout and the vertical luma sharpening use ESP32-P4 PIE instructions in `main/core/pixel_pie.S`. The output is byte-identical to the C version, and sharpening costs about 0.6 ms per frame.
 - **L2 cache autoload** over PSRAM makes each frame about 7% faster.
+- **Audio.** The phone only routes CarPlay audio to a receiver that also offers a microphone (see DiPlay issue #288), so `/info` declares PCM input as well as output. Speaker (ES8388) and microphones (ES7210) share one full-duplex I2S at 48 kHz stereo. `main/audio_output.c` mixes two lanes, main audio and navigation prompts, and ducks music during prompts. Other rates are converted in `main/core/audio_resample.c`. The microphone uplink is sealed with ChaCha20-Poly1305 like the downlink. See `docs/音频输入输出方案.md`.
+- **USB host fix.** ESP-IDF v5.5.3 aborts when a USB channel reports an error without halting (espressif/esp-idf#19111). `main/usb_hal_fix.c` replaces that function at link time. If the NCM link still fails, `main/usb_probe.c` briefly power-cycles the port so the phone re-enumerates, at most 3 times a minute.
 - **Charging.** `main/power_status.c` turns the IP2326 charger on through the second IO expander. The BSP does not do this. It also logs battery voltage and current from the INA226 once a minute.
 
 ## Repository layout
@@ -70,6 +74,7 @@ Documents (Chinese):
 - [Technical design](docs/技术实现方案.md)
 - [On-device acceptance steps](docs/实机验收.md)
 - [Software authentication](docs/软件认证接入.md)
+- [Audio input and output](docs/音频输入输出方案.md)
 
 ## Build
 
@@ -116,8 +121,9 @@ The per-frame CRC replay in `tools/perf/replay/` was checked against recorded iP
 - **Image is still soft.** The phone sends 240 lines and they are scaled 3× vertically with bilinear PPA. Sharpening helps, but small text is less crisp than on a native-resolution display.
 - **Extra reject or IDR right after connecting (240 profiles).** Earlier runs sometimes showed one extra rejected frame and IDR in the first 1–2 s, seen as one stutter when video starts. It did not appear in the latest replug test. Not investigated.
 - **iPhone does not re-enumerate after a long USB-A power-off.** After the 5 V port is off for a long time, the iPhone needs a physical replug. Short power-offs and normal replugs recover in about 6 s.
-- **USB host assertion.** An assertion in `usb_dwc_hal_chan_decode_intr` occurred once under decoder overload. The cause is unknown, and it has not reappeared.
-- **Audio is unverified.** Media playback, Siri, phone calls and microphone uplink have not been checked on the device.
+- **USB host errors.** The ESP-IDF assertion that rebooted the board under load is now caught (see above). The automatic re-enumeration after such an error has not yet been seen on the device.
+- **Video is slower while music plays.** About 13.6 fps instead of 15 during a scripted drag. Gap probes show the phone sends frames less evenly while it streams audio: skipped and late frames both rise about 2.4×. Tab5's decode time and USB receive are not the cause; four receive transfers in flight made no difference.
+- **Audio limits.** Only PCM is declared, not AAC or Opus. Navigation prompt mixing and phone calls are untested. Calls have no echo cancellation yet. Speaker volume is fixed at 30 and microphone gain at 30 dB.
 - **Battery.** Runtime on a full charge has not been measured. The charge current is fixed at the 1000 mA step. There is no battery indicator or low-battery shutdown. The IP2326 status pin (P6) does not reliably show charging.
 - **Security.** NVS and flash encryption are off. The default AirPlay Pair-Setup code is `3939`. The experimental iAP2 identity can be extracted from the firmware.
 - **Compatibility.** Tested with one iPhone, iOS 16, on one Tab5 (P4 v1.3). It is wired only; wireless CarPlay is not implemented.
