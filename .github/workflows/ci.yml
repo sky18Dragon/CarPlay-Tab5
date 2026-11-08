@@ -69,9 +69,13 @@ jobs:
           . "$IDF_PATH/export.sh"
           ./scripts/build.sh
       - name: Decoder regression
-        run: ./scripts/test_decoder.sh
+        run: |
+          . "$IDF_PATH/export.sh"
+          ./scripts/test_decoder.sh
       - name: Crypto regression
-        run: ./scripts/test_crypto.sh
+        run: |
+          . "$IDF_PATH/export.sh"
+          ./scripts/test_crypto.sh
 
   gate:
     name: Required CI
