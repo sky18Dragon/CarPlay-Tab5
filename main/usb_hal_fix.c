@@ -4,9 +4,9 @@
  * without CHHLTD, which reboots the board under USB load
  * (espressif/esp-idf#19111; master removed the assert in 63b468539f).
  *
- * Instead of asserting, an error that arrives without a halt stops the
- * channel and is reported when the halt interrupt follows, so the HCD sees an
- * ordinary halted-with-error pipe. BNA is reported as a transaction error:
+ * If hardware has already stopped, report the error immediately: disabling an
+ * already disabled channel produces no new halt interrupt. Only a still-enabled
+ * channel defers the error until it halts. BNA is reported as a transaction error:
  * the HCD of espressif/usb 1.6.0 aborts on the URB_NOT_AVAIL event that BNA
  * maps to. Everything else follows the original function. */
 #include "hal/usb_dwc_hal.h"
@@ -22,6 +22,15 @@ static volatile uint32_t recovered;    /* errors that would have asserted */
 
 uint32_t tab5_usb_hal_recovered_errors(void) { return recovered; }
 
+void __real_usb_dwc_hal_chan_activate(usb_dwc_hal_chan_t *, void *, int, int);
+void __wrap_usb_dwc_hal_chan_activate(usb_dwc_hal_chan_t *chan_obj, void *descs, int count, int start)
+{
+    /* A disconnect can discard a deferred interrupt. Never carry its error into
+     * a new transfer or a newly allocated pipe using the same channel index. */
+    deferred[chan_obj->flags.chan_idx] = 0;
+    __real_usb_dwc_hal_chan_activate(chan_obj, descs, count, start);
+}
+
 usb_dwc_hal_chan_event_t __wrap_usb_dwc_hal_chan_decode_intr(usb_dwc_hal_chan_t *chan_obj)
 {
     uint32_t chan_intrs = usb_dwc_ll_hcint_read_and_clear_intrs(chan_obj->regs);
@@ -29,21 +38,28 @@ usb_dwc_hal_chan_event_t __wrap_usb_dwc_hal_chan_decode_intr(usb_dwc_hal_chan_t 
     usb_dwc_hal_chan_event_t chan_event;
 
     if ((chan_intrs & CHAN_INTRS_ERROR_MSK) && !(chan_intrs & USB_DWC_LL_INTR_CHAN_CHHLTD)) {
-        /* Stop the channel; its halt interrupt carries the error to the HCD. */
         deferred[index] |= chan_intrs & CHAN_INTRS_ERROR_MSK;
-        usb_dwc_ll_hcchar_disable_chan(chan_obj->regs);
         ++recovered;
-        ESP_DRAM_LOGW("USB_HAL", "channel %u error 0x%x without halt; halting", index,
-                      (unsigned)(chan_intrs & CHAN_INTRS_ERROR_MSK));
-        return USB_DWC_HAL_CHAN_EVENT_NONE;
+        if (usb_dwc_ll_hcchar_chan_is_enabled(chan_obj->regs)) {
+            usb_dwc_ll_hcchar_disable_chan(chan_obj->regs);
+            return USB_DWC_HAL_CHAN_EVENT_NONE;
+        }
     }
-    if (chan_intrs & USB_DWC_LL_INTR_CHAN_CHHLTD) {
+    if ((chan_intrs & USB_DWC_LL_INTR_CHAN_CHHLTD) ||
+        !usb_dwc_ll_hcchar_chan_is_enabled(chan_obj->regs)) {
         chan_intrs |= deferred[index];
         deferred[index] = 0;
     }
 
     /* Errors > Channel Halt Request > Transfer completed (as in the original). */
     if (chan_intrs & CHAN_INTRS_ERROR_MSK) {
+        /* HCD only wakes a synchronous halt waiter on HALT_REQ. An error that
+         * races with that request must complete the cancellation too. */
+        if (chan_obj->flags.halt_requested) {
+            chan_obj->flags.halt_requested = 0;
+            chan_obj->flags.active = 0;
+            return USB_DWC_HAL_CHAN_EVENT_HALT_REQ;
+        }
         usb_dwc_hal_chan_error_t error;
         if (chan_intrs & USB_DWC_LL_INTR_CHAN_STALL) {
             error = USB_DWC_HAL_CHAN_ERROR_STALL;

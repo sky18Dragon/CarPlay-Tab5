@@ -17,7 +17,7 @@ static void display(void) {
     if(shown==state.stage && shown_error==state.error) return;
     shown=state.stage; shown_error=state.error;
     ESP_LOGI("SESSION","stage=%s error=%u",cp_stage_name(shown),(unsigned)shown_error);
-    tab5_ui_status(shown,shown_error,false);
+    tab5_ui_status(shown,shown_error);
 }
 esp_err_t tab5_session_init(void) {
     if(events) return ESP_OK;

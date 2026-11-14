@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "airplay_rtsp_session.c" "airplay_rtsp_server.c" "airplay_audio.c"
+    SRCS "airplay_rtsp_session.c" "airplay_rtsp_server.c" "airplay_audio.c" "airplay_media_keys.c"
     INCLUDE_DIRS "include"
     REQUIRES airplay_control airplay_media_bridge airplay_pairing airplay_rtsp airplay_timing
             auth_port

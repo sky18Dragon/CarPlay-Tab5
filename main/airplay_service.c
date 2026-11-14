@@ -13,6 +13,7 @@
 #include "nvs_flash.h"
 #include "entropy_source.h"
 #include "esp_log.h"
+#include "sd_log.h"
 static airplay_rtsp_server_t *server;
 static atomic_uint_fast32_t owner;
 esp_err_t tab5_airplay_start(uint64_t generation)
@@ -30,12 +31,12 @@ esp_err_t tab5_airplay_start(uint64_t generation)
     if(err==ESP_OK) err=airplay_rtsp_server_start(&identity.rtsp_server,&server);
     if(err!=ESP_OK) { tab5_entropy_release(); ESP_LOGE("AIRPLAY","Service start failed: %s",esp_err_to_name(err));return err; }
     owner=generation;
-    tab5_ui_status(CP_SESSION,CP_ERR_NONE,false);
+    tab5_ui_status(CP_SESSION,CP_ERR_NONE);
     return ESP_OK;
 }
 void tab5_airplay_stop(void)
 {
-    if(server) { airplay_rtsp_server_stop(server); server=NULL; tab5_entropy_release(); }
+    if(server) { tab5_log_event("airplay_stop"); airplay_rtsp_server_stop(server); server=NULL; tab5_entropy_release(); }
     airplay_audio_stop(0); tab5_audio_stop_all(); tab5_video_stop(); tab5_hid_reset(); owner=0;
 }
 uint16_t tab5_airplay_port(void) { return server?airplay_rtsp_server_get_port(server):0; }
