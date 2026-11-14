@@ -20,7 +20,7 @@ See [v1.0.0 release notes](docs/releases/v1.0.0.md) for validation and limitatio
 
 ## Hardware and switching phones
 
-Target: **Tab5 / ESP32-P4 v1.x / 16 MiB flash / 32 MiB PSRAM**, 360 MHz. P4 v3 and other boards are unverified. USB-C is for power/console; USB-A is for the phone.
+This project was developed and tested on the **M5Stack Tab5 with the ST7121 display driver IC**. The target configuration is **ESP32-P4 v1.x at 360 MHz / 16 MiB flash / 32 MiB PSRAM**. P4 v3 and other boards are unverified. USB-C is for power and the console. USB-A is for the phone.
 
 To switch phones: **unplug → Clear pairing → confirm → restart Tab5 → connect the new unlocked iPhone and confirm Trust**. An iPhone 17 Pro on iOS 26.5 needed a Tab5 restart after clearing; its failure cause remains unconfirmed. Pairing storage is limited, not an unlimited multi-phone database.
 

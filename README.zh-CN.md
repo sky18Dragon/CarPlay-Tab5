@@ -20,7 +20,7 @@
 
 ## 硬件与换机
 
-目标硬件为 **Tab5 / ESP32-P4 v1.x / 16 MiB Flash / 32 MiB PSRAM**，360 MHz。未验证 P4 v3 或其他板卡。USB-C 用于电脑/供电，USB-A 接手机。
+本项目基于**搭载 ST7121 屏幕驱动 IC 的 M5Stack Tab5** 开发和验证。目标配置为 **ESP32-P4 v1.x（360 MHz）/ 16 MiB Flash / 32 MiB PSRAM**。未验证 P4 v3 或其他板卡。USB-C 用于电脑/供电，USB-A 接手机。
 
 换手机建议：**拔下旧手机 → Clear pairing → 确认清理 → 重启 Tab5 → 连接已解锁的新手机并确认信任**。iPhone 17 Pro / iOS 26.5 曾出现 Clear 后仍无法连接、仅重启 Tab5 后成功；原因尚未定位，v1.0.0 不宣称已修复。当前配对空间有限，不支持无限保存多部手机。
 
