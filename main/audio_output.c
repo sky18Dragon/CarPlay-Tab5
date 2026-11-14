@@ -61,8 +61,9 @@ static esp_err_t open_codecs(void)
     }
     applied_volume = volume;
     if (esp_codec_dev_set_out_vol(speaker, applied_volume) != ESP_CODEC_DEV_OK ||
+        esp_codec_dev_set_out_mute(speaker, false) != ESP_CODEC_DEV_OK ||
         esp_codec_dev_open(microphone, &fmt) != ESP_CODEC_DEV_OK) {
-        ESP_LOGE(TAG, "microphone open failed");
+        ESP_LOGE(TAG, "volume, unmute or microphone open failed");
         esp_codec_dev_close(speaker);
         return ESP_FAIL;
     }
@@ -168,9 +169,9 @@ static void worker(void *arg)
             for (unsigned i = 0; i < TAB5_AUDIO_LANES; ++i) {
                 lane_t *l = &lanes[i];
                 if (!l->active) continue;
-                ESP_LOGI(TAG, "STATS lane=%u rate=%u ch=%u queued_ms=%u underrun_frames=%llu rejected=%llu reanchors=%lu lock_misses=%lu faster=%lu slower=%lu ducked=%d",
+                ESP_LOGI(TAG, "STATS lane=%u rate=%u ch=%u queued_ms=%u underrun_frames=%llu rejected=%llu rebuffers=%llu reanchors=%lu lock_misses=%lu faster=%lu slower=%lu ducked=%d",
                     i, l->rate, l->channels, (unsigned)(l->pcm.queued * 1000u / l->rate),
-                    (unsigned long long)l->pcm.underrun_frames, (unsigned long long)l->pcm.rejected_packets,
+                    (unsigned long long)l->pcm.underrun_frames, (unsigned long long)l->pcm.rejected_packets, (unsigned long long)l->pcm.rebuffer_count,
                     (unsigned long)l->reanchors, (unsigned long)l->lock_misses,
                     (unsigned long)l->faster, (unsigned long)l->slower, ducked);
             }
@@ -231,8 +232,8 @@ void tab5_audio_stop(unsigned lane, uint64_t generation)
     xSemaphoreTake(lock, portMAX_DELAY);
     lane_t *l = &lanes[lane];
     if (l->active && l->generation == generation) {
-        ESP_LOGI(TAG, "lane %u stop underrun_frames=%llu rejected=%llu reanchors=%lu lock_misses=%lu faster=%lu slower=%lu",
-            lane, (unsigned long long)l->pcm.underrun_frames, (unsigned long long)l->pcm.rejected_packets,
+        ESP_LOGI(TAG, "lane %u stop underrun_frames=%llu rejected=%llu rebuffers=%llu reanchors=%lu lock_misses=%lu faster=%lu slower=%lu",
+            lane, (unsigned long long)l->pcm.underrun_frames, (unsigned long long)l->pcm.rejected_packets, (unsigned long long)l->pcm.rebuffer_count,
             (unsigned long)l->reanchors, (unsigned long)l->lock_misses, (unsigned long)l->faster, (unsigned long)l->slower);
         stop_lane_locked(l);
     }

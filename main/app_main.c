@@ -23,6 +23,9 @@ void app_main(void)
     ESP_LOGI(TAG, "CarPlay-Tab5 v%s | IDF %s", esp_app_get_description()->version, esp_get_idf_version());
     ESP_ERROR_CHECK(bsp_i2c_init());
     ESP_ERROR_CHECK(tab5_power_init());
+#if CONFIG_TAB5_AUDIO_TEST
+    audio_test(); /* Complete codec access before USB/CarPlay can start. */
+#endif
     ESP_ERROR_CHECK(tab5_audio_init());
     ESP_ERROR_CHECK(tab5_audio_routes_init());
     ESP_ERROR_CHECK(tab5_ui_init());
