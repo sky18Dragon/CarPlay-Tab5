@@ -1,4 +1,4 @@
-# CarPlay-Tab5 · v1.0.0
+# CarPlay-Tab5
 
 English | [简体中文](README.zh-CN.md)
 
