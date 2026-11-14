@@ -8,6 +8,7 @@ First versioned release of the wired CarPlay receiver for M5Stack Tab5 / ESP32-P
 - Waiting-screen Clear pairing with confirmation, disconnected-session checks and namespace-scoped erasure.
 - Navigation stream ID recycling; USB channel error handling, TX/RX watchdogs, power-cycle recovery and task progress guard.
 - SD runtime/crash logging and version identification.
+- Upstream PCM starvation recovery, authenticated audio packet regression and required CI, adapted to dual audio lanes.
 - Removed firmware demos, boot audio tests, maintenance reset mode and one-off source injection scripts; retained regression tests.
 - Added isolated release builds, app/full BINs, configuration and SHA-256 manifests.
 
