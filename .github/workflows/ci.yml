@@ -73,7 +73,9 @@ jobs:
           . "$IDF_PATH/export.sh"
           ./scripts/test_decoder.sh
       - name: UI regression
-        run: ./scripts/test_ui.sh
+        run: |
+          . "$IDF_PATH/export.sh"
+          ./scripts/test_ui.sh
       - name: Crypto regression
         run: |
           . "$IDF_PATH/export.sh"
