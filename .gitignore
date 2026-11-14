@@ -11,8 +11,10 @@ __pycache__/
 *.dSYM/
 .DS_Store
 
-# Local-only material: identity, device logs, recordings, references, unrelated outputs
-/secrets/
+# Local-only material, except the explicitly bundled experimental identity below
+/secrets/*
+!/secrets/mfi/
+/secrets/mfi/*
 /artifacts/
 /reference/
 /outputs/
@@ -22,3 +24,10 @@ __pycache__/
 *.der
 *.pem
 *.key
+
+# Published experimental identity: narrow allowlist, not other credentials
+!/secrets/mfi/identity.pk8
+!/secrets/mfi/certificate.p7b
+!/secrets/mfi/certificate.der
+!/secrets/mfi/README.md
+!/secrets/mfi/SHA256SUMS

@@ -64,7 +64,7 @@ jobs:
           persist-credentials: false
       - name: Fetch verified decoder sources
         run: python3 scripts/fetch_openh264.py
-      - name: Build firmware without local identity material
+      - name: Build firmware with software authentication disabled
         run: |
           . "$IDF_PATH/export.sh"
           ./scripts/build.sh

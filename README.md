@@ -4,7 +4,7 @@ English | [简体中文](README.zh-CN.md)
 
 A wired CarPlay receiver for M5Stack Tab5 (ESP32-P4). Connect an unlocked iPhone to USB-A. The P4 handles pairing, video, audio, touch and local settings, with OpenH264 software video decoding.
 
-This is an independent experimental project, not Apple-certified. **No authentication identity is included in the source. Locally authenticated firmware contains an extractable experimental private key and must not be publicly distributed. A no-auth build cannot enter CarPlay.** See [authentication provenance and setup](docs/软件认证接入.md).
+This is an independent experimental project, not Apple-certified. **The current repository includes a shared experimental identity. Its private key is public and extractable from authenticated firmware; it is not a confidential identity. A no-auth build cannot enter CarPlay.** See [authentication provenance and setup](docs/软件认证接入.md).
 
 ## Features
 
@@ -32,10 +32,10 @@ Use **ESP-IDF v5.5.3**, with other components pinned by `dependencies.lock`:
 source <esp-idf-v5.5.3>/export.sh
 python3 scripts/fetch_openh264.py
 ./scripts/build.sh                      # explicitly disables software authentication
-./scripts/build.sh --software-auth      # local identity; do not distribute this image
+./scripts/build.sh --software-auth      # bundled experimental identity from secrets/mfi
 ```
 
-Authenticated builds require `identity.pk8`, `certificate.p7b` and `certificate.der` in the ignored `secrets/mfi/` directory. Build scripts explicitly set authentication ON/OFF instead of inheriting an old CMake choice.
+The current main branch includes `identity.pk8`, `certificate.p7b` and `certificate.der` in [secrets/mfi/](secrets/mfi/README.md); see the [acquisition and checksum guide](docs/软件认证接入.md). The original v1.0.0 tag and release attachments retain their original snapshot without these files. Build scripts explicitly set authentication ON/OFF instead of inheriting an old CMake choice.
 
 Release builds use separate directories and regenerate configuration from tracked defaults:
 
@@ -82,7 +82,7 @@ v1.0.0 removes the offline demo, boot audio test, flash-based pairing-reset main
 - Low source resolution and software decoding limit sharpness/frame rate. Music can lower video frame rate; occasional memory-related video rejection has been observed.
 - I2S disable messages may appear on audio start. This board may report `other_watchdog` on cold boot; that alone does not prove a runtime watchdog fault.
 - Wired PCM only. Complete phone-call behavior, echo cancellation, battery endurance and low-battery shutdown are unverified or unfinished. No wireless CarPlay.
-- Flash/NVS encryption is disabled. Never publish private identities, pairing records or local device recordings/logs. The default AirPlay Pair-Setup code is `3939`.
+- Flash/NVS encryption is disabled. The bundled experimental identity is public; keep other private identities, pairing records and local device recordings/logs out of the repository. The default AirPlay Pair-Setup code is `3939`.
 
 ## License
 

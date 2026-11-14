@@ -24,7 +24,9 @@ separate ESP-IDF v5.5.3 job fetches verified OpenH264 sources, builds ESP32-P4
 firmware, and runs decoder and crypto regressions. All jobs run on every PR,
 including documentation-only changes; failed, cancelled or skipped jobs fail
 the required aggregate gate. Workflows use read-only repository permissions
-and do not receive local identity files or other secrets.
+and receive the explicitly bundled public experimental identity with the checkout,
+but build firmware with software authentication disabled. Do not add other private
+identity files, device pairing records or secrets.
 
 Firmware build instructions are in README.md. Passing CI does not establish
 USB, CarPlay, audio/video or touchscreen behavior on real hardware. Record

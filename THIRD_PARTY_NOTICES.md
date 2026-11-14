@@ -51,7 +51,7 @@ Cisco OpenH264 v2.6.0（commit `652bdb7719f30b52b08e506645a7322ff1b2cc6f`）
 media_bridge、session、pairing、rtsp）、`components/net_port`、`time_port`、
 `media_bridge` 和 `auth_port` 来源于同一固定 Carplay-S3 提交
 `79a9f169f275b283f2909c5a326ed03c716c0d02`，保留 GPL-3.0-or-later 声明。
-未复制软件认证私钥或证书。auth_port 未注册 provider 时明确返回不支持。
+本节所述协议移植本身不含认证凭据；后续附带的实验认证材料见下方软件认证 provider 说明。auth_port 未注册 provider 时明确返回不支持。
 本地 NCM 改用 CDC Union 关联，并支持高速端点，修正分配失败回收和数据端点停止。
 协议组件复制和编译不等于服务已启动；运行路径及验证状态以执行记录为准。
 
@@ -74,6 +74,6 @@ Carplay-S3 提交，用于对本项目所编译的协议源码运行主机边界
 
 ## 可选 iAP2 软件认证 provider
 
-components/auth_software_provider 源于上述固定 Carplay-S3 提交 src/vendor/auth_software_provider.c/h，保留 GPL-3.0-or-later。本地增加可选构建、签名互斥锁、敏感临时缓冲清零和实际 raw 签名验证自检。实验身份材料独立保存于忽略目录，不作为 GPL 源码再许可。来源和构建边界见 docs/软件认证接入.md。
+components/auth_software_provider 源于上述固定 Carplay-S3 提交 src/vendor/auth_software_provider.c/h，保留 GPL-3.0-or-later。本地增加可选构建、签名互斥锁、敏感临时缓冲清零和实际 raw 签名验证自检。实验身份材料现随项目保存在 `secrets/mfi/`，源自 DiPlay v0.2.21 APK 的 `assets/offline-mfi`；DER 证书由 PKCS#7 容器提取。材料不作为 GPL 源码再许可，本项目未独立确认更早来源或分发授权范围。来源、文件校验和构建边界见 [软件认证接入](docs/软件认证接入.md)。
 
 `components/openh264_sw/cabac_decoder_esp.cpp` and `cabac_bin_inline.h` are modified copies of OpenH264 v2.6.0 `cabac_decoder.cpp` (BSD-2-Clause), changed to use 32-bit arithmetic.

@@ -4,7 +4,7 @@
 
 运行在 M5Stack Tab5（ESP32-P4）上的有线 CarPlay 接收端。iPhone 接 USB-A，Tab5 自行处理配对、音视频、触摸和设置页面。视频由 OpenH264 软件解码。
 
-本项目是独立实验项目，未获 Apple 认证。**源码不包含认证身份；本地带认证固件包含可提取的实验性私钥，不能直接公开分发。无认证构建不能进入 CarPlay。** 详见[软件认证说明](docs/软件认证接入.md)。
+本项目是独立实验项目，未获 Apple 认证。**当前仓库附带公开共享的实验性认证材料；带认证固件中的私钥可被提取，不能视为保密身份。无认证构建不能进入 CarPlay。** 详见[软件认证说明](docs/软件认证接入.md)。
 
 ## v1.0.0 功能
 
@@ -32,10 +32,10 @@
 source <esp-idf-v5.5.3>/export.sh
 python3 scripts/fetch_openh264.py
 ./scripts/build.sh                      # 明确关闭实验认证，开发构建
-./scripts/build.sh --software-auth      # 使用本机 secrets/mfi，不能公开该固件
+./scripts/build.sh --software-auth      # 使用仓库附带的 secrets/mfi 实验身份
 ```
 
-带认证构建需要本机提供 `secrets/mfi/identity.pk8`、`certificate.p7b`、`certificate.der`；该目录被 Git 忽略。认证选项会被 CMake 缓存，构建脚本始终显式设置 ON/OFF。
+当前仓库已附带 [secrets/mfi](secrets/mfi/README.md) 中的 `identity.pk8`、`certificate.p7b`、`certificate.der`，克隆当前 main 即可取得；获取与校验步骤见[软件认证接入](docs/软件认证接入.md)。v1.0.0 首发标签/附件保持原快照，不含这些材料。认证选项会被 CMake 缓存，构建脚本始终显式设置 ON/OFF。
 
 发布构建使用独立目录，从已跟踪的 `sdkconfig.defaults` 重新生成配置：
 
@@ -84,7 +84,7 @@ v1.0.0 移除了离线演示、开机音频测试、烧录式配对清除维护�
 - 屏幕源画面只有 240 行，软件解码帧率有限；音乐播放时帧率可能下降。偶发视频内存不足拒收仍有记录。
 - I2S 开流时可能出现已知 disable 日志噪声。冷启动 reset_reason 在该板上可能显示 other_watchdog，不能单独当成运行中看门狗故障。
 - 仅支持有线和 PCM；电话完整流程、回声消除、多小时续航和低电量关机未完成验证。无无线 CarPlay。
-- 未启用 Flash/NVS 加密；认证密钥、配对数据和本机采集日志不可随源码包上传。AirPlay Pair-Setup 默认码为 `3939`。
+- 未启用 Flash/NVS 加密；仓库附带的实验身份已公开；其他私钥、配对数据和本机采集日志仍不得随源码上传。AirPlay Pair-Setup 默认码为 `3939`。
 
 ## 许可
 
