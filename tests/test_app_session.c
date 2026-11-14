@@ -12,7 +12,7 @@ QueueHandle_t xQueueCreate(unsigned n,size_t size) { assert(n<=24 && size<=16);c
 int xQueueSend(QueueHandle_t q,const void *p,unsigned wait) { (void)q;(void)wait;if(count==capacity)return 0;memcpy(queue[(head+count++)%capacity],p,item_size);return 1; }
 int xQueueReceive(QueueHandle_t q,void *p,unsigned wait) { (void)q;(void)wait;if(!count)return 0;memcpy(p,queue[head],item_size);head=(head+1)%capacity;--count;return 1; }
 int64_t esp_timer_get_time(void) { return clock_ms*1000; }
-void tab5_ui_status(cp_stage stage,cp_error error,bool demo) { assert(!demo);displayed=stage;displayed_error=error; }
+void tab5_ui_status(cp_stage stage,cp_error error) {displayed=stage;displayed_error=error; }
 int main(void) {
  assert(tab5_session_init()==ESP_OK);
  tab5_session_attach(1);assert(displayed==CP_USB_ADDRESSABLE);

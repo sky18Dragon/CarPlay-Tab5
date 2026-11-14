@@ -4,6 +4,7 @@
  * RTSP session behavior follows DiPlay AirPlaySession.kt. Platform media,
  * event-socket, identity, and capability providers remain injected interfaces.
  */
+#include "airplay_audio.h"
 #include "airplay_rtsp_session.h"
 
 #include <stdlib.h>
@@ -11,6 +12,7 @@
 
 #include "airplay_bplist.h"
 #include "airplay_host_ui.h"
+#include "airplay_media_keys.h"
 #include "airplay_mfi_sap.h"
 #include "esp_log.h"
 #ifdef ESP_PLATFORM
@@ -48,8 +50,7 @@ struct airplay_rtsp_session {
     bool record_active;
     bool control_cipher_active;
     bool state_in_psram;
-    struct { uint64_t id,type; bool active; } media_keys[32];
-    unsigned media_key_count;
+    airplay_media_keys_t media_keys;
 };
 
 static airplay_rtsp_session_t *session_calloc(bool *allocated_in_psram)
@@ -280,8 +281,7 @@ static airplay_rtsp_session_result_t handle_teardown(
                     airplay_bplist_get_uint(&doc,value,&type)==AIRPLAY_BPLIST_OK)
                     {
                         session->config.stop_stream((unsigned)type,session->config.media_context);
-                        for (unsigned k=0;k<session->media_key_count;++k)
-                            if (session->media_keys[k].type==type) session->media_keys[k].active=false;
+                        airplay_media_keys_retire_type(&session->media_keys,type);
                     }
             }
         }
@@ -289,7 +289,7 @@ static airplay_rtsp_session_result_t handle_teardown(
             if (screen_selected) { session->screen_started=false; session->record_active=false; }
             return status_response(request,200,"OK",response,response_capacity,response_len);
         }
-        for (unsigned k=0;k<session->media_key_count;++k) session->media_keys[k].active=false;
+        airplay_media_keys_retire_all(&session->media_keys);
     }
 
     if (has_stream_selection) {
@@ -324,6 +324,30 @@ static airplay_rtsp_session_result_t handle_teardown(
     session->timing_port = 0U;
     return status_response(request, AIRPLAY_RTSP_STATUS_OK, "OK",
                            response, response_capacity, response_len);
+}
+
+/* Diagnostics: the phone's command type and parameter names (no values). */
+static void log_command(const airplay_rtsp_request_t *request)
+{
+    airplay_bplist_doc_t doc;
+    airplay_bplist_object_t root, type, params;
+    char name[48] = "?";
+    char keys[160] = "";
+    size_t name_len = 0U;
+    if (airplay_bplist_open(request->body, request->body_len, &doc) != AIRPLAY_BPLIST_OK ||
+        airplay_bplist_root(&doc, &root) != AIRPLAY_BPLIST_OK) {
+        ESP_LOGI(TAG, "command type=unparsed bytes=%u", (unsigned)request->body_len);
+        return;
+    }
+    if (airplay_bplist_dict_get(&doc, root, "type", &type) == AIRPLAY_BPLIST_OK) {
+        (void)airplay_bplist_get_string(&doc, type, name, sizeof(name), &name_len);
+    }
+    if (airplay_bplist_dict_get(&doc, root, "params", &params) == AIRPLAY_BPLIST_OK) {
+        (void)airplay_bplist_dict_keys(&doc, params, keys, sizeof(keys));
+    }
+    ESP_LOGI(TAG, "command type=%s params=[%s] bytes=%u", name, keys, (unsigned)request->body_len);
+    if (!strcmp(name, "duckAudio")) airplay_audio_duck(true);
+    else if (!strcmp(name, "unduckAudio")) airplay_audio_duck(false);
 }
 
 static airplay_rtsp_session_result_t handle_setup(
@@ -482,7 +506,7 @@ static airplay_rtsp_session_result_t handle_setup(
 
     if (session->config.start_stream) {
         airplay_stream_ports_t replies[8]={0}; size_t accepted=0;
-        uint64_t requested_ids[8]; unsigned requested_count=0;
+        uint64_t requested_ids[8]; unsigned requested_count=0,new_ids=0;
         // Validate the whole request before opening any ports.
         for (uint64_t i=0;i<stream_count;++i) {
             airplay_bplist_object_t entry,value; uint64_t type,id;
@@ -497,15 +521,17 @@ static airplay_rtsp_session_result_t handle_setup(
                 for (unsigned k=0;k<requested_count;++k) if (requested_ids[k]==id)
                     return status_response(request,400,"Bad Request",response,response_capacity,response_len);
                 requested_ids[requested_count++]=id;
-                bool known=false;
-                for (unsigned k=0;k<session->media_key_count;++k) if (session->media_keys[k].id==id) {
-                    known=true;
-                    if (!session->media_keys[k].active || session->media_keys[k].type!=type)
-                        return status_response(request,503,"Service Unavailable",response,response_capacity,response_len);
-                }
-                if (!known && session->media_key_count+stream_count>32)
+                const airplay_media_key_state_t state=airplay_media_keys_check(&session->media_keys,id,type);
+                if (state==AIRPLAY_MEDIA_KEY_REJECTED) {
+                    ESP_LOGW(TAG,"setup=rejected reason=retired_stream_id type=%llu",(unsigned long long)type);
                     return status_response(request,503,"Service Unavailable",response,response_capacity,response_len);
+                }
+                if (state==AIRPLAY_MEDIA_KEY_NEW) ++new_ids;
             }
+        }
+        if (!airplay_media_keys_have_room(&session->media_keys,new_ids)) {
+            ESP_LOGW(TAG,"setup=rejected reason=too_many_active_streams new=%u",new_ids);
+            return status_response(request,503,"Service Unavailable",response,response_capacity,response_len);
         }
         for (uint64_t i=0;i<stream_count;++i) {
             airplay_bplist_object_t entry;
@@ -514,18 +540,8 @@ static airplay_rtsp_session_result_t handle_setup(
                 ESP_LOGI(TAG,"stream_ready type=%llu data=%u control=%u",(unsigned long long)replies[accepted].type,
                     replies[accepted].data_port,replies[accepted].control_port);
                 if (replies[accepted].type==110) session->screen_started=true;
-                bool known=false;
-                for (unsigned k=0;k<session->media_key_count;++k) {
-                    if (session->media_keys[k].id==replies[accepted].connection_id) known=true;
-                    else if (replies[accepted].type>=110 && session->media_keys[k].type==replies[accepted].type)
-                        session->media_keys[k].active=false;
-                }
-                if (!known) {
-                    unsigned k=session->media_key_count++;
-                    session->media_keys[k].id=replies[accepted].connection_id;
-                    session->media_keys[k].type=replies[accepted].type;
-                    session->media_keys[k].active=true;
-                }
+                if (!airplay_media_keys_record(&session->media_keys,replies[accepted].connection_id,replies[accepted].type))
+                    ESP_LOGW(TAG,"media_keys=full type=%llu",(unsigned long long)replies[accepted].type);
                 ++accepted;
             }
         }
@@ -823,6 +839,7 @@ airplay_rtsp_session_result_t airplay_rtsp_session_handle(
     if (strcmp(request->method,"POST")==0 && path_has_suffix(request->path,"/command")) {
         if (!session->control_cipher_active || !session->initial_setup_complete)
             return status_response(request,503U,"Service Unavailable",response,response_capacity,response_len);
+        log_command(request);
         if (airplay_host_ui_handle(request)) ESP_LOGI(TAG,"OEM requestUI queued for local menu");
         return status_response(request,200U,"OK",response,response_capacity,response_len);
     }

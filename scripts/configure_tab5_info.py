@@ -7,7 +7,25 @@ import plistlib
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / 'components/airplay_software_provider/assets'
-FORMATS = 0x400 | 0x800 | 0x4000 | 0x8000  # 44.1/48 kHz, s16 mono/stereo
+# PCM s16 format bits (DiPlay AirPlayInfoPlist.kt, 48 kHz entertainment rate).
+PCM_VOICE = 0x3fc                      # 8/16/24/32 kHz, mono and stereo
+PCM = PCM_VOICE | 0xc000               # plus 48 kHz mono and stereo
+PCM_MONO = 0x154 | 0x4000              # 8/16/24/32/48 kHz mono
+PCM_MONO_IN = 0x54 | 0x4000            # microphone: 8/16/24/48 kHz mono (whole fractions of 48 kHz)
+# Declaring a microphone input is what makes the iPhone route CarPlay audio to the
+# receiver (DiPlay issue #288). No Opus or AAC: only PCM is implemented.
+AUDIO = [  # (type, audioType, output formats, input formats)
+    (100, 'compatibility', PCM, PCM_MONO_IN),
+    (101, 'compatibility', PCM, None),
+    (100, 'default', PCM, PCM_MONO_IN),
+    (100, 'alert', PCM, None),
+    (100, 'media', PCM, None),
+    (100, 'telephony', PCM_MONO, PCM_MONO_IN),
+    (100, 'speechRecognition', PCM_MONO, PCM_MONO_IN),
+    (101, 'default', PCM, None),
+]
+LATENCIES = [(100, None), (100, 'default'), (100, 'media'), (100, 'telephony'),
+             (100, 'speechRecognition'), (100, 'alert'), (101, None), (101, 'default')]
 
 def normalize(d):
     d['name'] = 'Tab5 CarPlay'
@@ -15,16 +33,27 @@ def normalize(d):
     d['manufacturer'] = 'CarPlay-Tab5 project'
     d['displays'] = [d['displays'][0]]
     d['hidDevices'][0]['name'] = 'Tab5 touchscreen'
-    d['extendedFeatures'] = [x for x in d.get('extendedFeatures', []) if x != 'vocoderInfo']
-    d['audioFormats'] = [dict(type=100, audioType=usage, audioOutputFormats=FORMATS)
-                         for usage in ('default', 'media', 'alert')]
-    d['audioLatencies'] = [dict(type=100, audioType=usage, inputLatencyMicros=0,
-                               outputLatencyMicros=60000)
-                          for usage in ('default', 'media', 'alert')]
-    # No OEM-menu action exists in this application yet.
-    for key in ('oemIcons', 'oemIconLabel'):
-        d.pop(key, None)
-    d['oemIconVisible'] = False
+    d['extendedFeatures'] = ['vocoderInfo', 'enhancedRequestCarUI']
+    formats = []
+    for kind, usage, output, inputs in AUDIO:
+        entry = dict(type=kind, audioType=usage, audioOutputFormats=output)
+        if inputs is not None:
+            entry['audioInputFormats'] = inputs
+        formats.append(entry)
+    d['audioFormats'] = formats
+    latencies = []
+    for kind, usage in LATENCIES:
+        entry = dict(type=kind, inputLatencyMicros=0, outputLatencyMicros=0)
+        if usage is not None:
+            entry['audioType'] = usage
+        latencies.append(entry)
+    d['audioLatencies'] = latencies
+    # CarPlay home-screen icon; tapping it sends requestUI, which opens the
+    # local settings page (volume, brightness).
+    d['oemIconVisible'] = True
+    d['oemIconLabel'] = 'Tab5 设置'
+    d['oemIcons'] = [dict(imageData=(ASSETS / 'oem_settings.png').read_bytes(),
+                          widthPixels=128, heightPixels=128, prerendered=True)]
     return d
 
 def main():
@@ -37,10 +66,10 @@ def main():
         if check:
             assert original == expected, f'{path}: capability mismatch'
             assert len(original['displays']) == 1
-            assert len(path.read_bytes()) <= 4096
+            assert len(path.read_bytes()) <= 3500  # AIRPLAY_RTSP_SESSION_INFO_MAX_BYTES
         else:
             path.write_bytes(plistlib.dumps(expected, fmt=plistlib.FMT_BINARY, sort_keys=False))
-    print('Tab5 capability templates: single screen, supported PCM, no microphone/OEM menu')
+    print('Tab5 capability templates: single screen, PCM with microphone input, settings icon')
 
 if __name__ == '__main__':
     main()

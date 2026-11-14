@@ -9,4 +9,10 @@ if [[ "$(idf.py --version)" != 'ESP-IDF v5.5.3' ]]; then
   echo '此基线要求 ESP-IDF v5.5.3' >&2
   exit 1
 fi
-idf.py -DIDF_TARGET=esp32p4 build
+auth=OFF
+case "${1:-}" in
+  "") ;;
+  --software-auth) auth=ON ;;
+  *) echo 'Usage: scripts/build.sh [--software-auth]' >&2; exit 2 ;;
+esac
+idf.py -DIDF_TARGET=esp32p4 -DTAB5_SOFTWARE_AUTH="$auth" build

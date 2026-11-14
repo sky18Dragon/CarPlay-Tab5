@@ -52,4 +52,9 @@ airplay_pair_verify_result_t airplay_rtsp_pairing_derive_screen_output_key(
     uint64_t stream_connection_id,
     uint8_t output_key[AIRPLAY_PAIR_VERIFY_KEY_BYTES]);
 
+airplay_pair_verify_result_t airplay_rtsp_pairing_derive_stream_input_key(
+    const airplay_rtsp_pairing_t *session,
+    uint64_t stream_connection_id,
+    uint8_t input_key[AIRPLAY_PAIR_VERIFY_KEY_BYTES]);
+
 void airplay_rtsp_pairing_destroy(airplay_rtsp_pairing_t *session);

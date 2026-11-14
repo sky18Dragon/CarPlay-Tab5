@@ -1,131 +1,93 @@
-# CarPlay-Tab5
+# CarPlay-Tab5 · v1.0.0
 
 [English](README.md) | 简体中文
 
-在 M5Stack Tab5（ESP32-P4）上运行的有线 Apple CarPlay 接收端。iPhone 插在 Tab5 的 USB-A 口上，视频、触摸和 CarPlay 会话全部在 ESP32-P4 上处理。芯片没有硬件 H.264 解码器，视频用 OpenH264 软件解码。
+运行在 M5Stack Tab5（ESP32-P4）上的有线 CarPlay 接收端。iPhone 接 USB-A，Tab5 自行处理配对、音视频、触摸和设置页面。视频由 OpenH264 软件解码。
 
-> **实验性项目。** 本项目用于个人学习和研究，与 Apple 无关，也未经 Apple 认可。通过 iAP2 认证需要一套身份材料，这套材料**不在**本仓库中（见[认证](#认证)）。
+本项目是独立实验项目，未获 Apple 认证。**源码不包含认证身份；本地带认证固件包含可提取的实验性私钥，不能直接公开分发。无认证构建不能进入 CarPlay。** 详见[软件认证说明](docs/软件认证接入.md)。
 
-## 当前状态
+## v1.0.0 功能
 
-当前固件（2026-11-08）：890×240，16 帧/秒，已打开电池充电。
+- USBMUX / Lockdown 配对、TLS、iAP2 认证与有线 CarPlay 会话。
+- 890×240、目标 16 fps 的视频输出，PPA 缩放到 1280×720；支持触摸操作。
+- 音乐、导航语音混音及压低音乐、麦克风上行；Siri 已有实机使用验证。
+- CarPlay 的「Tab5 设置」入口提供音量、亮度调节，重启后保留。
+- 等待连接页的 **Clear pairing** 按钮：二次确认，拔线并退出旧会话后，仅清除手机信任记录。
+- USB 通道错误处理、TX / RX 停滞检测、端口断电恢复与独立 15 秒任务进度监护。
+- SD 卡运行日志和异常记录；IP2326 充电控制与电池供电。
 
-| 项目 | 状态 |
-|---|---|
-| USB 枚举、USBMUX、Lockdown 配对和 TLS | 测试用 iPhone 上可用 |
-| iAP2 认证和身份识别，启动 CarPlay 会话 | 使用本地实验身份时可用 |
-| H.264 视频（High Profile，CABAC） | 890×240 下约 15 帧/秒，10 分钟拖动浸泡 0 拒收 |
-| 触摸（HID 触摸板） | 可用，点击位置已在实机上确认 |
-| 物理拔插 | 约 6 秒恢复，内存无泄漏 |
-| 电池充电和电池供电 | 约 950 mA 充电；拔掉 USB-C 后能继续运行 |
-| 音频（媒体、Siri、通话、麦克风） | **未在实机验证** |
+版本、升级步骤和测试边界见 [v1.0.0 发布说明](docs/releases/v1.0.0.md)。
 
-890×240@16 下 10 分钟模拟拖动的实测：
+## 硬件与换机
 
-| 显示间隔 P50 | P90 | P95 | P99 | ≥ 200 ms |
-|---|---|---|---|---|
-| 66–67 ms | 81–84 ms | 91–99 ms | 119–137 ms | 0 次 |
+目标硬件为 **Tab5 / ESP32-P4 v1.x / 16 MiB Flash / 32 MiB PSRAM**，360 MHz。未验证 P4 v3 或其他板卡。USB-C 用于电脑/供电，USB-A 接手机。
 
-## 硬件
-
-- M5Stack Tab5，ESP32-P4 **v1.x 版本**。固件按 v3 以下版本编译（`CONFIG_ESP32P4_SELECTS_REV_LESS_V3`），主频 360 MHz，没有超频。
-- iPhone，用线接到 Tab5 的 **USB-A**（主机）口。
-- USB-C 用于供电和串口。NP-F550 电池可选。
-
-## 工作原理
-
-```text
-iPhone ──USB──> NCM 网络 ──TCP──> RTSP / 屏幕流
-                                    │
-                                    ▼
-             视频队列（6 帧）→ OpenH264
-   核心 1：CABAC 解析 ── 帧级流水线 ── 核心 0：重建、去块、
-                                       边界扩展、PIE 打包和锐化
-                                    │
-                                    ▼
-        PPA：YUV→RGB，缩放 23/16 × 3，旋转 → MIPI-DSI 1280×720
-```
-
-- **非正方形像素布局。** 向手机申请 890×240 像素，但声明屏幕是 16:9。iOS 会按 890×500 排版，发来横向压缩的画面，再由 PPA 拉回全屏。像素少了，帧率更高，图标比例也不变。
-- **帧级流水线。** 核心 1 解析下一帧时，核心 0 重建上一帧，用两套宏块数组和两份阶段上下文。遇到多 slice、出错等不常见情况，流水线先排空，再走上游原路径。
-- **PIE SIMD。** 打包成 PPA 的 YUV420 格式和纵向亮度锐化，都用 ESP32-P4 的 PIE 指令实现（`main/core/pixel_pie.S`）。结果与 C 版本逐字节一致，锐化每帧约 0.6 ms。
-- **L2 缓存自动预取**覆盖 PSRAM，每帧快约 7%。
-- **充电。** `main/power_status.c` 通过第二颗 IO 扩展芯片打开 IP2326 充电器，板级支持包不会做这件事。它还每分钟从 INA226 读一次电池电压和电流并写入日志。
-
-## 目录结构
-
-| 路径 | 内容 |
-|---|---|
-| `main/` | 应用：USB 主机和 NCM、USBMUX 和 Lockdown、iAP2、视频输出、触摸/HID、音频、界面、电源 |
-| `main/core/` | 与硬件无关、有主机测试的代码：会话、视频队列和解码封装、像素转换、触摸映射、RTSP 流 |
-| `components/` | AirPlay 控制、RTSP、配对、屏幕流、时间同步、软件身份、认证接口、Ed25519、OpenH264 移植（`openh264_sw`） |
-| `components/airplay_software_provider/assets/` | 每个视频档位一份 `/info` plist，内含 HID 触摸描述符 |
-| `tests/` | 主机测试和测试数据 |
-| `scripts/` | 构建、下载 OpenH264、主机/解码/加密测试脚本 |
-| `tools/perf/` | 测量工具：日志统计、导出帧、临时源码钩子、回放和 CRC 校验 |
-| `docs/` | 设计文档和完整开发记录 |
-
-文档：
-- [执行记录](docs/执行记录.md)：每次改动、测量数据，以及做过又撤回的尝试。
-- [技术实现方案](docs/技术实现方案.md)
-- [实机验收步骤](docs/实机验收.md)
-- [软件认证接入](docs/软件认证接入.md)
+换手机建议：**拔下旧手机 → Clear pairing → 确认清理 → 重启 Tab5 → 连接已解锁的新手机并确认信任**。iPhone 17 Pro / iOS 26.5 曾出现 Clear 后仍无法连接、仅重启 Tab5 后成功；原因尚未定位，v1.0.0 不宣称已修复。当前配对空间有限，不支持无限保存多部手机。
 
 ## 构建
 
-需要 ESP-IDF **v5.5.3**。其他组件版本由 `dependencies.lock` 固定（Tab5 BSP 1.3.2、LVGL 9.3.0）。
+使用 **ESP-IDF v5.5.3**；其他依赖由 `dependencies.lock` 固定。
 
 ```sh
 source <esp-idf-v5.5.3>/export.sh
-python3 scripts/fetch_openh264.py      # 把固定版本的 OpenH264 下载到 external/
-./scripts/build.sh                     # 或 idf.py build
+python3 scripts/fetch_openh264.py
+./scripts/build.sh                      # 明确关闭实验认证，开发构建
+./scripts/build.sh --software-auth      # 使用本机 secrets/mfi，不能公开该固件
 ```
 
-视频高度由 `CONFIG_TAB5_VIDEO_PROFILE_HEIGHT` 决定，默认 240，即 890×240 档位。其他选项见 `main/Kconfig.projbuild`。
+带认证构建需要本机提供 `secrets/mfi/identity.pk8`、`certificate.p7b`、`certificate.der`；该目录被 Git 忽略。认证选项会被 CMake 缓存，构建脚本始终显式设置 ON/OFF。
 
-### 认证
-
-手机要先通过 iAP2 认证才会启动 CarPlay。本项目可以嵌入一套实验性软件身份，构建方法：
-
-1. 把 `identity.pk8`、`certificate.p7b`、`certificate.der` 放进 `secrets/mfi/`。这个目录已被 git 忽略，里面的内容不会发布。
-2. 配置时加 `-DTAB5_SOFTWARE_AUTH=ON`。
-
-没有这套身份，固件也能编译和运行，但手机会停在 `authentication_identity_missing`。这个选项会缓存在 `build/CMakeCache.txt`，重新配置后要检查一下。带身份构建出的固件里有可提取的密钥材料，不要分发。来源说明见 `docs/软件认证接入.md`。
-
-### 烧录
-
-只写应用分区，保留 NVS（里面存着手机配对记录和 AirPlay 身份）：
+发布构建使用独立目录，从已跟踪的 `sdkconfig.defaults` 重新生成配置：
 
 ```sh
-python -m esptool --chip esp32p4 -p <串口> write_flash 0x10000 build/carplay_tab5.bin
+python scripts/release.py --auth local  # 本地可用的实验认证固件
+python scripts/release.py --auth none   # 不包含身份、不能进入 CarPlay 的开发固件
 ```
 
-## 测试
+产物位于 `artifacts/releases/v1.0.0/{local-auth,no-auth}/`，包含应用 BIN、全量 BIN、版本信息、配置、许可证、manifest 和 SHA256SUMS。`version.txt` 是固件版本来源。保留已验证的编译与性能参数，本版不引入新的全局优化档位。
+
+## 烧录
+
+**升级已有设备只写应用区**，保留配对、音量、亮度及其他 NVS 资料：
 
 ```sh
-./scripts/test_host.sh       # 主机单元测试（会话、USB、iAP2、RTSP、像素转换、触摸等）
-./scripts/test_decoder.sh    # 用合成的 High Profile 测试流做解码回归（先编译固件）
-./scripts/test_crypto.sh     # 用 ESP-IDF 自带的 Mbed TLS 源码做加密测试
+python -m esptool --chip esp32p4 -p <串口> write_flash 0x10000 <版本对应的-app.bin>
 ```
 
-`tools/perf/replay/` 的逐帧 CRC 回放用 iPhone 实录码流做过验证。实录码流里有手机屏幕内容，所以不公开。
+`-full.bin` 从 **0x0** 烧录，仅用于新设备初始化；会覆盖引导程序、分区表及其覆盖范围内的旧配对/设置。不能将应用 BIN 烧到 0x0，也不能将全量 BIN 烧到 0x10000。发布分区表使用 24 KiB NVS、4 MiB factory；已有设备的不同 factory 容量不需要通过升级改写。
 
-## 遗留问题
+## 测试与代码组织
 
-- **帧率受手机限制。** iPhone 大约每 20 帧就有 1 帧晚到或被跳过。同样条件下，新旧解码器都只有 15.1–15.4 帧/秒，16 帧档没有达到 15.8 帧/秒的目标。240@17 能到 15.7 帧/秒，但大约每 10 分钟队列溢出一次，延迟也更高。
-- **画面仍偏软。** 手机只发 240 行，PPA 用双线性纵向放大 3 倍。锐化有改善，但小字没有原生分辨率清楚。
-- **240 档刚连上时可能多一次拒收或 IDR。** 以前的测试里，有时在头 1–2 秒内会多 1 次拒收和 IDR，表现为刚出画面时卡一下。最近一次拔插测试没有出现，原因未查。
-- **USB-A 长时间断电后，iPhone 不会重新枚举。** 5 V 口长时间断电后，需要手动拔插手机。短时断电和正常拔插约 6 秒恢复。
-- **USB 主机断言。** 解码过载时出现过一次 `usb_dwc_hal_chan_decode_intr` 断言，原因不明，之后没有再出现。
-- **音频未验证。** 媒体播放、Siri、通话和麦克风上行都没有在实机上确认过。 参见[音频播放联调与诊断](docs/音频播放联调.md)。
-- **电池。** 满电能用多久还没测。充电电流固定在 1000 mA 档。没有电量显示，也没有低电量关机。IP2326 的状态脚（P6）不能可靠反映是否在充电。
-- **安全。** 没有启用 NVS 加密和 Flash 加密。AirPlay Pair-Setup 默认码是 `3939`。实验性 iAP2 身份可以从固件中提取。
-- **兼容性。** 只在一台 iPhone（iOS 16）和一块 Tab5（P4 v1.3）上测过。只支持有线，没有实现无线 CarPlay。
-- **真实的触摸到显示延迟**没有用相机测过，上面的延迟数据来自固件日志。
-- **测量脚本只用于开发。** `tools/perf/add_*.py` 会临时修改源码，用完必须还原。负责烧录和抓日志的脚本依赖本机路径，没有放进仓库。
+```sh
+./scripts/test_host.sh
+./scripts/test_ui.sh
+./scripts/test_crypto.sh
+./scripts/test_decoder.sh build-release-local-auth
+```
 
-## 许可和致谢
+| 目录 | 内容 |
+|---|---|
+| `main/` | 正式应用、USB/协议、音视频、UI、电源及 SD 日志 |
+| `main/core/` | 可在主机测试的会话、队列、像素、触摸及协议逻辑 |
+| `components/` | AirPlay、认证接口、软件身份提供者与 OpenH264 移植 |
+| `tests/` | 持续回归测试、硬件桩和合成码流，仅在主机构建 |
+| `scripts/` | 构建、发布、依赖获取及测试入口 |
+| `tools/perf/` | 离线日志分析、码流回放和 CRC 工具，不进入固件 |
+| `docs/` | 设计、发布说明与[执行记录](docs/执行记录.md) |
 
-本项目包含改编自 [xmz28/Carplay-S3](https://github.com/xmz28/Carplay-S3) 的代码，许可为 **GPL-3.0-or-later**，所以用本仓库构建的固件受 GPL 约束。其他部分保留各自的许可：OpenH264（BSD-2-Clause）、orlp/ed25519（zlib），以及 ESP-IDF、板级支持包和 LVGL 各自的许可。详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 和 `licenses/`。
+v1.0.0 移除了离线演示、开机音频测试、烧录式配对清除维护模式、应用中的模拟显示分支，以及 `tools/perf/add_*.py` 一次性源码改写脚本。合成码流仅保留给解码回归，不再嵌入应用。开发日志中的旧命令属于历史记录，不应直接用于本版。
+
+## 已知限制
+
+- iPhone 12 Pro Max / iOS 16.1.1 已验证清理、重新配对、视频和音乐。iPhone 17 Pro / iOS 26.5 只有用户确认的“重启 Tab5 后成功”，未取得失败日志。
+- 既有约一小时音乐/导航日志中有一次非人为断开，之后自动恢复；不承诺零掉线。USB 故障恢复已完成受控注入验证，但真实线材/供电问题仍可能影响连接。
+- 屏幕源画面只有 240 行，软件解码帧率有限；音乐播放时帧率可能下降。偶发视频内存不足拒收仍有记录。
+- I2S 开流时可能出现已知 disable 日志噪声。冷启动 reset_reason 在该板上可能显示 other_watchdog，不能单独当成运行中看门狗故障。
+- 仅支持有线和 PCM；电话完整流程、回声消除、多小时续航和低电量关机未完成验证。无无线 CarPlay。
+- 未启用 Flash/NVS 加密；认证密钥、配对数据和本机采集日志不可随源码包上传。AirPlay Pair-Setup 默认码为 `3939`。
+
+## 许可
+
+包含改编自 [xmz28/Carplay-S3](https://github.com/xmz28/Carplay-S3) 的 GPL-3.0-or-later 代码；OpenH264、Ed25519、ESP-IDF、BSP 和 LVGL 保留各自许可。见 [LICENSE](LICENSE)、[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 和 `licenses/`。认证材料本身不因本项目源码许可而获得重新分发授权。
 
 Apple、CarPlay、iPhone、AirPlay 是 Apple Inc. 的商标。

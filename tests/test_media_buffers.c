@@ -8,7 +8,8 @@ int main(void)
     uint8_t samples[32], valid[8], out[64], data[32];
     for(unsigned i=0;i<sizeof(data);++i) data[i]=(uint8_t)(i+1);
     cp_pcm p;
-    assert(!cp_pcm_init(&p,samples,valid,8,8000,2,4));
+    assert(!cp_pcm_init(&p,samples,valid,8,22050,2,4));
+    assert(cp_pcm_init(&p,samples,valid,8,24000,1,4));
     assert(cp_pcm_init(&p,samples,valid,8,48000,2,4)); cp_pcm_reset(&p,7);
     assert(!cp_pcm_push(&p,6,0,data,8,false));
     assert(cp_pcm_push(&p,7,UINT32_MAX-1,data,8,true));

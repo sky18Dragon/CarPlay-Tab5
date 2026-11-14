@@ -74,6 +74,12 @@ airplay_bplist_result_t airplay_bplist_dict_get(
     airplay_bplist_object_t dictionary,
     const char *key,
     airplay_bplist_object_t *value);
+/* Comma-separated key names of a dictionary, for diagnostics. */
+airplay_bplist_result_t airplay_bplist_dict_keys(
+    const airplay_bplist_doc_t *doc,
+    airplay_bplist_object_t dictionary,
+    char *output,
+    size_t capacity);
 /* Read widthPixels/heightPixels from the first (main) entry in an AirPlay /info displays array. */
 airplay_bplist_result_t airplay_bplist_get_main_display_size(
     const airplay_bplist_doc_t *doc,

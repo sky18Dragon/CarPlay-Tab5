@@ -21,13 +21,25 @@ esp_netif_t *netif;
 usb_transfer_t *rx,*tx,*status,*control;
 bool rx_busy,tx_busy,status_busy,control_busy,rx_done,tx_done,status_done,control_done;
 bool control_claimed,data_claimed,failed;
+static std::atomic<bool> fault; /* a running link failed; the probe re-enumerates */
 std::atomic<bool> attached{false},started{false};
+std::atomic<bool> quiescing{false};
 uint8_t control_interface,data_interface,data_alt,ep_in,ep_out,ep_status,mac_index;
 uint16_t in_mps,out_mps,status_mps,sequence;
 uint8_t interface_mac[6];
 enum class ControlStage { mac,alternate } control_stage;
 int64_t report_deadline,control_deadline;
 unsigned rx_frames,tx_frames,rx_blocks;
+/* While CarPlay streams, the phone sends NCM data many times a second (at least
+ * about 18 frames/s in field logs). A receive transfer that never completes
+ * after a recovered USB channel error froze video for 11 minutes, so a link
+ * that received steadily and then goes silent counts as failed. */
+constexpr int64_t RX_STALL_US=5000000;
+constexpr int64_t TX_STALL_US=3000000;
+constexpr unsigned RX_STALL_ARM_BLOCKS=100;
+static int64_t rx_last_at;
+static int64_t tx_submitted_at;
+static unsigned rx_blocks_at_last;
 struct Packet { uint16_t size; uint8_t bytes[1514]; };
 QueueHandle_t output;
 StaticQueue_t output_control;
@@ -35,7 +47,7 @@ uint8_t *output_storage,*aggregate;
 ncm::Stream *stream;
 
 esp_err_t transmit(void *,void *data,size_t size) {
-    if (!attached || !started || size<14 || size>1514) return ESP_ERR_INVALID_STATE;
+    if (!attached || !started || quiescing || size<14 || size>1514) return ESP_ERR_INVALID_STATE;
     Packet p; p.size=uint16_t(size); memcpy(p.bytes,data,size);
     if (xQueueSend(output,&p,0)!=pdTRUE) return ESP_ERR_NO_MEM;
     // The USB task sleeps until a USB event. Without this wake-up, a TCP ACK or touch
@@ -104,7 +116,8 @@ esp_err_t ncm_host_start(usb_host_client_handle_t c,usb_device_handle_t d) {
         ESP_LOGW(tag,"Unsupported descriptors ctrl=%u data=%u IN=%02x OUT=%02x MAC_string=%u",control_interface,data_interface,ep_in,ep_out,mac_index);
         return ESP_ERR_NOT_FOUND;
     }
-    client=c; device=d; failed=started=false; sequence=0; rx_frames=tx_frames=rx_blocks=0;
+    client=c; device=d; failed=started=false; sequence=0; rx_frames=tx_frames=rx_blocks=0; rx_blocks_at_last=0; rx_last_at=esp_timer_get_time();
+    quiescing=false; fault=false; tx_submitted_at=0;
     report_deadline=esp_timer_get_time()+10000000;
     xQueueReset(output);
     delete stream; stream=new(std::nothrow) ncm::Stream(aggregate,65535,in_mps);
@@ -132,7 +145,7 @@ esp_err_t ncm_host_start(usb_host_client_handle_t c,usb_device_handle_t d) {
     return e;
 }
 void ncm_host_poll() {
-    if (!attached) return;
+    if (!attached || quiescing) return;
     if (control_busy && esp_timer_get_time()>control_deadline && !failed) { failed=true; ESP_LOGE(tag,"MAC descriptor timeout; unplug to cancel safely"); }
     if (control_done) {
         control_done=false;
@@ -179,7 +192,23 @@ void ncm_host_poll() {
         if (status->status==USB_TRANSFER_STATUS_COMPLETED && status->actual_num_bytes>=8)
             ESP_LOGI(tag,"NOTIFICATION type=%02x value=%u",status->data_buffer[1],ncm::le16(status->data_buffer+2));
     }
-    if (failed) { ncm_host_disconnect(); return; }
+    const int64_t now=esp_timer_get_time();
+    if (tx_busy && now-tx_submitted_at>TX_STALL_US && !failed) {
+        failed=true;
+        ESP_LOGW(tag,"TX stalled: transfer pending for %lld ms (tx_frames=%u tx_pending=%u)",
+                 (long long)((now-tx_submitted_at)/1000),tx_frames,unsigned(uxQueueMessagesWaiting(output)));
+    }
+    if (rx_blocks!=rx_blocks_at_last) { rx_blocks_at_last=rx_blocks; rx_last_at=now; }
+    else if (started && rx_blocks>=RX_STALL_ARM_BLOCKS && now-rx_last_at>RX_STALL_US && !failed) {
+        failed=true;
+        ESP_LOGW(tag,"RX stalled: nothing received for %lld ms (rx_usb=%u rx_busy=%d)",
+                 (long long)((now-rx_last_at)/1000),rx_blocks,int(rx_busy));
+    }
+    if (failed) {
+        /* Do not halt endpoints here: that may wait forever for a lost channel
+         * interrupt. The probe cuts VBUS and waits for DEV_GONE before cleanup. */
+        quiescing=true; fault=true; return;
+    }
     if (!started) return;
     if (!rx_busy) { esp_err_t e=usb_host_transfer_submit(rx); rx_busy=e==ESP_OK; if (e!=ESP_OK) failed=true; }
     if (status && !status_busy) { esp_err_t e=usb_host_transfer_submit(status); status_busy=e==ESP_OK; }
@@ -189,7 +218,7 @@ void ncm_host_poll() {
             size_t size=ncm::build(tx->data_buffer,1600,packet.bytes,packet.size,sequence++,out_mps);
             tx->num_bytes=size;
             esp_err_t e=size?usb_host_transfer_submit(tx):ESP_ERR_INVALID_SIZE;
-            tx_busy=e==ESP_OK; if (e!=ESP_OK) failed=true;
+            tx_busy=e==ESP_OK; if (tx_busy) tx_submitted_at=esp_timer_get_time(); else failed=true;
         }
     }
     if (esp_timer_get_time()>report_deadline) {
@@ -211,6 +240,7 @@ void ncm_host_disconnect() {
     }
     if(output) xQueueReset(output);
 }
+bool ncm_host_take_fault() { return fault.exchange(false); }
 bool ncm_host_drained() { return !rx_busy && !tx_busy && !status_busy && !control_busy; }
 void ncm_host_release() {
     if (!ncm_host_drained()) return;

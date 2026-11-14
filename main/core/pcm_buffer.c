@@ -3,7 +3,7 @@
 bool cp_pcm_init(cp_pcm *p,uint8_t *samples,uint8_t *valid,size_t capacity,uint32_t rate,unsigned channels,size_t preroll)
 {
     if(!p || !samples || !valid || !capacity || capacity>48000 ||
-       (rate!=44100 && rate!=48000) || (channels!=1 && channels!=2) || preroll>capacity) return false;
+       (rate!=8000 && rate!=16000 && rate!=24000 && rate!=32000 && rate!=44100 && rate!=48000) || (channels!=1 && channels!=2) || preroll>capacity) return false;
     *p=(cp_pcm){.samples=samples,.valid=valid,.capacity=capacity,.sample_rate=rate,
                 .frame_bytes=channels*2,.preroll=preroll};
     cp_pcm_reset(p,0); return true;

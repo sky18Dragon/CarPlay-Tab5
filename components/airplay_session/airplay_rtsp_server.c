@@ -326,8 +326,21 @@ static bool start_stream(const airplay_rtsp_pairing_t *pairing,const airplay_bpl
     airplay_bplist_object_t value; uint64_t type,id;
     if (airplay_bplist_dict_get(doc,entry,"type",&value)!=AIRPLAY_BPLIST_OK ||
         airplay_bplist_get_uint(doc,value,&type)!=AIRPLAY_BPLIST_OK) return false;
-    if (type==100 || type==101) return airplay_audio_start(pairing,doc,entry,ports);
-    if ((type!=110 && type!=111) ||
+    if (type==100 || type==101) {
+        airplay_rtsp_server_t *server=context;
+        struct sockaddr_in6 peer; socklen_t peer_len=sizeof(peer);
+        memset(&peer,0,sizeof(peer));
+        const bool have_peer=server && server->client_fd>=0 &&
+            getpeername(server->client_fd,(struct sockaddr *)&peer,&peer_len)==0 && peer.sin6_family==AF_INET6;
+        return airplay_audio_start(pairing,doc,entry,have_peer?&peer:NULL,ports);
+    }
+    if (type!=110 && type!=111) {
+        char keys[200]="";
+        (void)airplay_bplist_dict_keys(doc,entry,keys,sizeof(keys));
+        ESP_LOGW(TAG,"setup=unsupported_stream type=%llu keys=[%s]",(unsigned long long)type,keys);
+        return false;
+    }
+    if (
         airplay_bplist_dict_get(doc,entry,"streamConnectionID",&value)!=AIRPLAY_BPLIST_OK ||
         airplay_bplist_get_uint(doc,value,&id)!=AIRPLAY_BPLIST_OK) return false;
     ports->type=type; ports->connection_id=id;

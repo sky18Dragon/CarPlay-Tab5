@@ -2,6 +2,10 @@
 set -eu
 cd "$(dirname "$0")/.."
 mkdir -p artifacts
+"${CC:-cc}" -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -Itests/pairing_stubs -Imain main/pairing_reset.c tests/test_pairing_reset.c -o artifacts/test_pairing_reset
+./artifacts/test_pairing_reset
+"${CC:-cc}" -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -Itests/usb_hal_stubs -Itests/stubs main/usb_hal_fix.c tests/test_usb_hal_fix.c -o artifacts/test_usb_hal_fix
+./artifacts/test_usb_hal_fix
 "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -Imain main/usb_descriptors.c tests/test_usb_descriptors.c -o artifacts/test_usb_descriptors
 ./artifacts/test_usb_descriptors
 "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -Itests/stubs -Imain main/usb_config_scan.c main/core/ncm_descriptor.c main/usb_descriptors.c tests/test_usb_config_scan.c -o artifacts/test_usb_config_scan
@@ -26,6 +30,10 @@ mkdir -p artifacts
 
 "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -Imain main/core/pcm_buffer.c main/core/video_queue.c tests/test_media_buffers.c -o artifacts/test_media_buffers
 ./artifacts/test_media_buffers
+"${CC:-cc}" -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -Imain main/core/audio_resample.c tests/test_audio_resample.c -o artifacts/test_audio_resample
+./artifacts/test_audio_resample
+"${CC:-cc}" -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -Icomponents/airplay_session components/airplay_session/airplay_media_keys.c tests/test_media_keys.c -o artifacts/test_media_keys
+./artifacts/test_media_keys
 "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -Imain -Imain/core main/core/pixel_convert.c tests/test_pixel_convert.c -o artifacts/test_pixel_convert
 ./artifacts/test_pixel_convert
 
