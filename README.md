@@ -77,6 +77,7 @@ v1.0.0 removes the offline demo, boot audio test, flash-based pairing-reset main
 
 ## Known limitations
 
+- The firmware supports pairing and connecting with one iPhone at a time. To switch phones, use **Clear pairing** on the Tab5 waiting screen before pairing the new iPhone.
 - iPhone 12 Pro Max / iOS 16.1.1 has passed clear/re-pair/video/music testing. iPhone 17 Pro / iOS 26.5 has user-confirmed success after restarting Tab5; failure logs are unavailable.
 - A previous hour-long music/navigation run had one unrequested disconnect, followed by recovery. Controlled USB recovery tests passed; this is not a zero-disconnect guarantee.
 - Low source resolution and software decoding limit sharpness/frame rate. Music can lower video frame rate; occasional memory-related video rejection has been observed.
