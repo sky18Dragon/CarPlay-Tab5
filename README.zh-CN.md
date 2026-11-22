@@ -48,13 +48,21 @@ python scripts/release.py --auth none   # 不包含身份、不能进入 CarPlay
 
 ## 烧录
 
-**升级已有设备只写应用区**，保留配对、音量、亮度及其他 NVS 资料：
+**首次在 Tab5 上安装**（出厂固件、M5Stack 启动器或其他项目）：从 **0x0** 烧录全量镜像。它会同时安装本项目的引导程序、分区表和应用，并清除其覆盖范围内的旧配对/设置。
+
+```sh
+python -m esptool --chip esp32p4 -p <串口> write_flash 0x0 <版本对应的-full.bin>
+```
+
+**已运行 CarPlay-Tab5 的设备升级时只写应用区**，保留配对、音量、亮度及其他 NVS 资料：
 
 ```sh
 python -m esptool --chip esp32p4 -p <串口> write_flash 0x10000 <版本对应的-app.bin>
 ```
 
-`-full.bin` 从 **0x0** 烧录，仅用于新设备初始化；会覆盖引导程序、分区表及其覆盖范围内的旧配对/设置。不能将应用 BIN 烧到 0x0，也不能将全量 BIN 烧到 0x10000。发布分区表使用 24 KiB NVS、4 MiB factory；已有设备的不同 factory 容量不需要通过升级改写。
+只写应用区的前提是设备上已经是本项目的引导程序。其他引导程序的分区布局可能不同，设备会在 `entry 0x4ff29ed0` 之后循环重启且屏幕无显示；此时从 0x0 烧录全量镜像即可恢复。不确定时先备份：`python -m esptool --chip esp32p4 -p <串口> read_flash 0 0x1000000 tab5-backup.bin`。
+
+不能将应用 BIN 烧到 0x0，也不能将全量 BIN 烧到 0x10000。发布分区表使用 24 KiB NVS、4 MiB factory；已运行本项目的设备升级时不需要改写分区表。
 
 ## 测试与代码组织
 

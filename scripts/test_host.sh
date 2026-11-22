@@ -4,6 +4,8 @@ cd "$(dirname "$0")/.."
 mkdir -p artifacts
 "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -Itests/pairing_stubs -Imain main/pairing_reset.c tests/test_pairing_reset.c -o artifacts/test_pairing_reset
 ./artifacts/test_pairing_reset
+"${CC:-cc}" -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -Itests/pair_store_stubs -Itests/stubs -Imain main/pair_store.c tests/test_pair_store.c -o artifacts/test_pair_store
+./artifacts/test_pair_store
 "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -Itests/usb_hal_stubs -Itests/stubs main/usb_hal_fix.c tests/test_usb_hal_fix.c -o artifacts/test_usb_hal_fix
 ./artifacts/test_usb_hal_fix
 "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -Imain main/usb_descriptors.c tests/test_usb_descriptors.c -o artifacts/test_usb_descriptors

@@ -67,10 +67,13 @@ def main():
             'NO AUTHENTICATION IDENTITY: this build cannot enter CarPlay. Build with your own identity for CarPlay.\n')
     (output / 'FLASH-INSTRUCTIONS.txt').write_text(note + '\n'
         'Hardware: M5Stack Tab5, ESP32-P4 v1.x, 16 MiB flash. ESP-IDF v5.5.3.\n'
-        'Upgrade existing Tab5 (keeps pairing/settings):\n'
-        f'python -m esptool --chip esp32p4 -p PORT write_flash 0x10000 {app.name}\n\n'
-        'Fresh installation ONLY (replaces partition table and ERASES pairing/settings in its address range):\n'
+        'First install on a Tab5 (factory firmware, launcher or any other project). Installs this\n'
+        'bootloader and partition table, and ERASES pairing/settings in its address range:\n'
         f'python -m esptool --chip esp32p4 -p PORT write_flash 0x0 {full.name}\n\n'
+        'Upgrade a Tab5 that already runs CarPlay-Tab5 (keeps pairing/settings):\n'
+        f'python -m esptool --chip esp32p4 -p PORT write_flash 0x10000 {app.name}\n\n'
+        'The app-only write needs this project\'s bootloader. On another bootloader the Tab5\n'
+        'resets in a loop with a blank screen; recover by writing the full image at 0x0.\n'
         'Do not flash the app BIN at 0x0 or the full BIN at 0x10000.\n'
         'For switching phones: unplug, Clear pairing, restart Tab5, then connect the new unlocked phone.\n')
     manifest = {'version': version, 'variant': variant, 'software_auth': args.auth == 'local',

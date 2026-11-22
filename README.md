@@ -48,13 +48,21 @@ Output: `artifacts/releases/v1.0.0/{local-auth,no-auth}/`, containing app/full B
 
 ## Flash
 
-Upgrade an existing device by writing **only the app**, preserving pairing and settings:
+**First install on a Tab5** (factory firmware, M5Stack launcher, or any other project): write the full image at **0x0**. It installs this project's bootloader and partition table with the app, and erases saved pairing and settings in its range.
+
+```sh
+python -m esptool --chip esp32p4 -p <port> write_flash 0x0 <release-full.bin>
+```
+
+**Upgrade a Tab5 that already runs CarPlay-Tab5** by writing **only the app**, preserving pairing and settings:
 
 ```sh
 python -m esptool --chip esp32p4 -p <port> write_flash 0x10000 <release-app.bin>
 ```
 
-The `-full.bin` is written at **0x0** for fresh installations only. It replaces the bootloader/partition table and erases existing pairing/settings in its address range. Never interchange the app/full offsets. The release partition table has 24 KiB NVS and a 4 MiB factory app; existing devices do not need their partition table changed for an app upgrade.
+The app-only write is safe only on top of this project's bootloader. Another bootloader may expect a different layout, and the Tab5 then resets in a loop right after `entry 0x4ff29ed0` without showing anything. Recover by writing the full image at 0x0. If unsure, back up first: `python -m esptool --chip esp32p4 -p <port> read_flash 0 0x1000000 tab5-backup.bin`.
+
+Never interchange the app/full offsets. The release partition table has 24 KiB NVS and a 4 MiB factory app; existing CarPlay-Tab5 devices do not need their partition table changed for an app upgrade.
 
 ## Tests and structure
 
@@ -77,7 +85,7 @@ v1.0.0 removes the offline demo, boot audio test, flash-based pairing-reset main
 
 ## Known limitations
 
-- The firmware supports pairing and connecting with one iPhone at a time. To switch phones, use **Clear pairing** on the Tab5 waiting screen before pairing the new iPhone.
+- The firmware connects one iPhone at a time and its pairing storage holds about two phones. Pairing a further phone removes the stored records of the others, which then confirm Trust again. **Clear pairing** on the waiting screen still removes everything by hand.
 - iPhone 12 Pro Max / iOS 16.1.1 has passed clear/re-pair/video/music testing. iPhone 17 Pro / iOS 26.5 has user-confirmed success after restarting Tab5; failure logs are unavailable.
 - A previous hour-long music/navigation run had one unrequested disconnect, followed by recovery. Controlled USB recovery tests passed; this is not a zero-disconnect guarantee.
 - Low source resolution and software decoding limit sharpness/frame rate. Music can lower video frame rate; occasional memory-related video rejection has been observed.

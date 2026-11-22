@@ -5,6 +5,7 @@
 #include "iap2_client.h"
 #include "lockdown_xml.h"
 #include "mux_channels.h"
+#include "pair_store.h"
 #include "nvs_flash.h"
 #include <atomic>
 #include <string>
@@ -72,26 +73,34 @@ bool valid_record(const PairRecord &r) {
         strnlen(r.host_cert,sizeof(r.host_cert))<sizeof(r.host_cert) &&
         strnlen(r.device_cert,sizeof(r.device_cert))<sizeof(r.device_cert) && r.root_key[0] && r.root_cert[0];
 }
-bool save(const PairRecord &r);
-bool load(PairRecord &r) {
-    nvs_handle_t h;
-    if (nvs_open("tab5_pair",NVS_READONLY,&h)!=ESP_OK) return false;
-    size_t n=sizeof(r); esp_err_t e=nvs_get_blob(h,"record",&r,&n); nvs_close(h);
-    return e==ESP_OK && n==sizeof(r) && valid_record(r);
-}
 void record_key(const uint8_t hash[32], char key[16]) {
     constexpr char hex[]="0123456789abcdef";
     key[0]='p';
     for (unsigned i=0;i<7;i++) { key[1+i*2]=hex[hash[i]>>4]; key[2+i*2]=hex[hash[i]&15]; }
     key[15]=0;
 }
+// The trust state is kept beside the identity blob (see pair_store.h); records
+// written by v1.0.0 have no separate state and keep the value inside the blob.
+void apply_trust(PairRecord &r) {
+    char key[16]; record_key(r.phone_key_hash,key);
+    r.trusted=tab5_pair_store_trusted(key,r.trusted==1)?1:0;
+}
+bool load(PairRecord &r) {
+    nvs_handle_t h;
+    if (nvs_open("tab5_pair",NVS_READONLY,&h)!=ESP_OK) return false;
+    size_t n=sizeof(r); esp_err_t e=nvs_get_blob(h,"record",&r,&n); nvs_close(h);
+    if (e!=ESP_OK || n!=sizeof(r) || !valid_record(r)) return false;
+    apply_trust(r); return true;
+}
 bool load_phone(PairRecord &r,const uint8_t hash[32]) {
     char key[16]; record_key(hash,key);
     nvs_handle_t h;
     if(nvs_open("tab5_pair",NVS_READONLY,&h)!=ESP_OK) return false;
     size_t n=sizeof(r); esp_err_t e=nvs_get_blob(h,key,&r,&n); nvs_close(h);
-    return e==ESP_OK && n==sizeof(r) && valid_record(r) && !memcmp(r.phone_key_hash,hash,32);
+    if (e!=ESP_OK || n!=sizeof(r) || !valid_record(r) || memcmp(r.phone_key_hash,hash,32)) return false;
+    apply_trust(r); return true;
 }
+// Writes the identity blob. Only a new or regenerated identity comes here.
 bool save(const PairRecord &r) {
     char key[16]; record_key(r.phone_key_hash,key);
     nvs_handle_t h;
@@ -100,19 +109,31 @@ bool save(const PairRecord &r) {
         auto prior=std::make_unique<PairRecord>();
         size_t n=sizeof(*prior);
         esp_err_t existing=nvs_get_blob(h,key,prior.get(),&n);
+        nvs_close(h);
         if(existing!=ESP_ERR_NVS_NOT_FOUND &&
            (existing!=ESP_OK || n!=sizeof(*prior) || !valid_record(*prior) || memcmp(prior->phone_key_hash,r.phone_key_hash,32))) {
             ESP_LOGE(tag,"Pair record collision/corruption; refusing overwrite");
-            mbedtls_platform_zeroize(prior.get(),sizeof(*prior)); nvs_close(h); return false;
+            mbedtls_platform_zeroize(prior.get(),sizeof(*prior)); return false;
         }
         mbedtls_platform_zeroize(prior.get(),sizeof(*prior));
-        e=nvs_set_blob(h,key,&r,sizeof(r));
-        if(e==ESP_OK) e=nvs_commit(h);
-        nvs_close(h);
+        unsigned evicted=0;
+        e=tab5_pair_store_save(key,&r,sizeof(r),&evicted);
+        if(evicted) ESP_LOGW(tag,"PAIR_RECORDS_EVICTED entries=%u; other phones must confirm Trust again",evicted);
+        if(e==ESP_OK) e=tab5_pair_store_set_trusted(key,r.trusted==1);
     }
     if(e!=ESP_OK) {
         storage_failed=true;
-        ESP_LOGE(tag,"Pair persistence failed: %s; existing NVS is not erased",esp_err_to_name(e));
+        ESP_LOGE(tag,"Pair persistence failed: %s",esp_err_to_name(e));
+    }
+    return e==ESP_OK;
+}
+// Trust changes touch one small entry, never the identity blob.
+bool save_trust(const PairRecord &r) {
+    char key[16]; record_key(r.phone_key_hash,key);
+    esp_err_t e=tab5_pair_store_set_trusted(key,r.trusted==1);
+    if(e!=ESP_OK) {
+        storage_failed=true;
+        ESP_LOGE(tag,"Trust state persistence failed: %s",esp_err_to_name(e));
     }
     return e==ESP_OK;
 }
@@ -429,7 +450,7 @@ bool pair_phone(PairRecord &r,uint32_t epoch) {
         if (error.empty()) {
             std::string operation;
             if (!text_value(reply,"Request","string",operation) || operation!="Pair") { ESP_LOGE(tag,"Invalid Pair response"); return false; }
-            r.trusted=1; if (!save(r)) return false; ESP_LOGI(tag,"PAIR_OK identity saved for this phone"); return true; }
+            r.trusted=1; if (!save_trust(r)) return false; ESP_LOGI(tag,"PAIR_OK trust saved for this phone"); return true; }
         if (error!="PairingDialogResponsePending" && error!="PasswordProtected") { ESP_LOGE(tag,"Pair rejected: %s",error.c_str()); return false; }
         if (reported_error!=error) {
             ESP_LOGW(tag,"%s: unlock phone and confirm Trust on the phone",error=="PasswordProtected"?"WAITING_FOR_UNLOCK":"TRUST_PENDING");
@@ -453,7 +474,7 @@ void session(PairRecord &r,uint32_t epoch) {
     std::string error=error_value(reply);
     if (!error.empty()) {
         ESP_LOGE(tag,"StartSession rejected: %s",error.c_str());
-        if (error=="InvalidHostID" || error=="InvalidPairRecord") { r.trusted=0; save(r); }
+        if (error=="InvalidHostID" || error=="InvalidPairRecord") { r.trusted=0; save_trust(r); }
         return;
     }
     bool ssl=false;

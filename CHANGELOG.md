@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Pairing storage: confirming Trust no longer rewrites the 6.8 KiB identity record. The trust state is a separate one-entry key, so a second iPhone can pair while the first phone's record is still stored (v1.0.0 stopped at "Couldn't save phone pairing").
+- When a new phone's record still does not fit in the 24 KiB NVS, records of other phones are removed and the write is retried once. Those phones confirm Trust again on their next connection.
+- Records written by v1.0.0 are read unchanged.
+
 ## v1.0.0 — 2026-11-14
 
 First versioned release of the wired CarPlay receiver for M5Stack Tab5 / ESP32-P4 v1.x.
