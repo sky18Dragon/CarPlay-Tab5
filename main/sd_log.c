@@ -59,6 +59,12 @@ static size_t recovered_len, file_size;
 static unsigned file_index;
 static bool mounted, warned_missing;
 static esp_reset_reason_t reset_reason;
+/* Internal RAM keeps this through every reset except a loss of power. The board
+ * reports a watchdog reset on some cold boots; a real one stops firmware that was
+ * running and had set the marker, while power-on leaves the RAM random. */
+#define ALIVE_MAGIC 0x414c4956u            /* "ALIV" */
+static __NOINIT_ATTR uint32_t alive;
+static bool watchdog_on_power_up;
 
 static const char *reason_name(esp_reset_reason_t r)
 {
@@ -231,8 +237,9 @@ static bool open_file(void)
     if (!out) return false;
     char sha[17] = "";
     esp_app_get_elf_sha256(sha, sizeof(sha));
-    fprintf(out, "=== Tab5 log %05u | firmware %s %s | reset_reason=%s | uptime_ms=%lld ===\n",
+    fprintf(out, "=== Tab5 log %05u | firmware %s %s | reset_reason=%s%s | uptime_ms=%lld ===\n",
             file_index, esp_app_get_description()->version, sha, reason_name(reset_reason),
+            watchdog_on_power_up ? " (hardware reported other_watchdog)" : "",
             (long long)(esp_timer_get_time() / 1000));
     return true;
 }
@@ -302,6 +309,11 @@ static void writer_task(void *arg)
 void tab5_log_init(void)
 {
     reset_reason = esp_reset_reason();
+    if (reset_reason == ESP_RST_WDT && alive != ALIVE_MAGIC) {
+        watchdog_on_power_up = true;
+        reset_reason = ESP_RST_POWERON;
+    }
+    alive = ALIVE_MAGIC;
     /* Only a panic writes the caches back, so only then is the PSRAM ring current.
      * After any other reset the periodic saves are the record. */
     const bool panicked = reset_reason == ESP_RST_PANIC || reset_reason == ESP_RST_INT_WDT ||
@@ -330,7 +342,8 @@ void tab5_log_init(void)
     setvbuf(tee, NULL, _IOLBF, 512);
     esp_log_set_vprintf(log_vprintf);
 
-    ESP_LOGI(TAG, "boot reset_reason=%s recovered_bytes=%u", reason_name(reset_reason), (unsigned)recovered_len);
+    ESP_LOGI(TAG, "boot reset_reason=%s%s recovered_bytes=%u", reason_name(reset_reason),
+             watchdog_on_power_up ? " (hardware reported other_watchdog)" : "", (unsigned)recovered_len);
     log_previous_crash();
     if (xTaskCreate(writer_task, "sd_log", 6144, NULL, 2, &writer) != pdPASS) ESP_LOGE(TAG, "writer task failed");
 }

@@ -51,25 +51,40 @@ def normalize(d):
     # CarPlay home-screen icon; tapping it sends requestUI, which opens the
     # local settings page (volume, brightness).
     d['oemIconVisible'] = True
-    d['oemIconLabel'] = 'Tab5 设置'
+    d['oemIconLabel'] = 'Tab5 Settings'
     d['oemIcons'] = [dict(imageData=(ASSETS / 'oem_settings.png').read_bytes(),
                           widthPixels=128, heightPixels=128, prerendered=True)]
     return d
+
+def right_hand(path):
+    """The right-hand-drive twin of an embedded template: the same capabilities,
+    with the CarPlay dock and driver-side controls on the right."""
+    return path.with_name(path.stem + '_rhd.plist')
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--check', action='store_true')
     check = parser.parse_args().check
     for path in sorted(ASSETS.glob('info*.plist')):
+        if path.stem.endswith('_rhd'):
+            continue
         original = plistlib.loads(path.read_bytes())
         expected = normalize(plistlib.loads(path.read_bytes()))
+        expected['rightHandDrive'] = False
+        twin = dict(expected, rightHandDrive=True)
+        embedded = path.name != 'info.plist'   # info.plist is a reference copy only
         if check:
             assert original == expected, f'{path}: capability mismatch'
             assert len(original['displays']) == 1
             assert len(path.read_bytes()) <= 3500  # AIRPLAY_RTSP_SESSION_INFO_MAX_BYTES
+            if embedded:
+                assert plistlib.loads(right_hand(path).read_bytes()) == twin, f'{right_hand(path)}: not the twin'
+                assert len(right_hand(path).read_bytes()) <= 3500
         else:
             path.write_bytes(plistlib.dumps(expected, fmt=plistlib.FMT_BINARY, sort_keys=False))
-    print('Tab5 capability templates: single screen, PCM with microphone input, settings icon')
+            if embedded:
+                right_hand(path).write_bytes(plistlib.dumps(twin, fmt=plistlib.FMT_BINARY, sort_keys=False))
+    print('Tab5 capability templates: single screen, PCM with microphone input, settings icon, both drive sides')
 
 if __name__ == '__main__':
     main()

@@ -1,0 +1,2 @@
+# Vendored third-party source, kept byte-identical to upstream.
+components/speexdsp/** -whitespace

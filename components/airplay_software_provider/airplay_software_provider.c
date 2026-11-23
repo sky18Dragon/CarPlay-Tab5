@@ -27,7 +27,9 @@ static const char *TAG = "airplay_identity";
 
 #define INFO_SYMBOL(height) \
     extern const uint8_t info_##height##_start[] asm("_binary_info_" #height "_plist_start"); \
-    extern const uint8_t info_##height##_end[] asm("_binary_info_" #height "_plist_end");
+    extern const uint8_t info_##height##_end[] asm("_binary_info_" #height "_plist_end"); \
+    extern const uint8_t info_##height##_rhd_start[] asm("_binary_info_" #height "_rhd_plist_start"); \
+    extern const uint8_t info_##height##_rhd_end[] asm("_binary_info_" #height "_rhd_plist_end");
 INFO_SYMBOL(192)
 INFO_SYMBOL(240)
 INFO_SYMBOL(288)
@@ -62,6 +64,8 @@ static char s_device_id[AIRPLAY_DEVICE_ID_BYTES + 1U];
 static char s_bluetooth_id[AIRPLAY_DEVICE_ID_BYTES + 1U];
 static char s_public_key_hex[AIRPLAY_PUBLIC_KEY_HEX_BYTES + 1U];
 static uint8_t s_info_plist[AIRPLAY_INFO_MAX_BYTES];
+/* Read when each CarPlay session starts, so a change applies from the next one. */
+static volatile bool s_right_hand_drive;
 static size_t s_info_plist_len;
 static bool s_ready;
 
@@ -228,8 +232,14 @@ static esp_err_t prepare_info_plist(void)
 {
     const uint8_t *starts[]={info_192_start,info_240_start,info_288_start,info_360_start,info_384_start,info_480_start,info_576_start};
     const uint8_t *ends[]={info_192_end,info_240_end,info_288_end,info_360_end,info_384_end,info_480_end,info_576_end};
+    const uint8_t *rhd_starts[]={info_192_rhd_start,info_240_rhd_start,info_288_rhd_start,info_360_rhd_start,
+                                 info_384_rhd_start,info_480_rhd_start,info_576_rhd_start};
+    const uint8_t *rhd_ends[]={info_192_rhd_end,info_240_rhd_end,info_288_rhd_end,info_360_rhd_end,
+                               info_384_rhd_end,info_480_rhd_end,info_576_rhd_end};
     unsigned index=carplay_video_profile_index();
-    const uint8_t *info_plist_start=starts[index],*info_plist_end=ends[index];
+    const bool right=s_right_hand_drive;
+    const uint8_t *info_plist_start=right?rhd_starts[index]:starts[index];
+    const uint8_t *info_plist_end=right?rhd_ends[index]:ends[index];
     const size_t template_len = (size_t)(info_plist_end - info_plist_start);
     if (template_len == 0U || template_len > sizeof(s_info_plist)) {
         return ESP_ERR_INVALID_SIZE;
@@ -247,7 +257,13 @@ static esp_err_t prepare_info_plist(void)
         return ESP_ERR_INVALID_RESPONSE;
     }
     s_info_plist_len = template_len;
+    ESP_LOGI(TAG, "/info prepared: %s-hand drive", right ? "right" : "left");
     return ESP_OK;
+}
+
+void airplay_software_provider_set_right_hand_drive(bool right_hand_drive)
+{
+    s_right_hand_drive = right_hand_drive;
 }
 
 static bool provider_random(uint8_t *output, size_t output_len, void *context)
@@ -294,7 +310,8 @@ static esp_err_t get_provider_config(airplay_identity_config_t *out_config,
     (void)context;
     if (out_config == NULL || !s_ready) return ESP_ERR_INVALID_STATE;
     memset(out_config, 0, sizeof(*out_config));
-    if (s_info_plist_len == 0U) return ESP_ERR_INVALID_STATE;
+    /* Called once per session start, while no server uses the buffer. */
+    if (prepare_info_plist() != ESP_OK || s_info_plist_len == 0U) return ESP_ERR_INVALID_STATE;
 
     const size_t identifier_len = strlen(s_pairing_id);
     out_config->rtsp_server.pairing.pair_setup = (airplay_pair_setup_config_t){

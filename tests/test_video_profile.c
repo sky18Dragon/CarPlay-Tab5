@@ -26,7 +26,7 @@ esp_err_t nvs_set_u16(nvs_handle_t h,const char *k,uint16_t v) {
 esp_err_t nvs_commit(nvs_handle_t h) { (void)h; flash=ram; return ESP_OK; }
 void nvs_close(nvs_handle_t h) { (void)h; }
 static unsigned boot(unsigned requested) {
-    test_requested_height=requested; initialized=false; active=0; fell_back=false;
+    test_requested_height=requested; initialized=false; active=0; fell_back=false; pending=false;
     return carplay_video_profile_current()->height;
 }
 int main(void) {
@@ -56,5 +56,19 @@ int main(void) {
     assert(boot(288)==288 && carplay_video_profile_touch_height()==288);
     /* A confirmed safe profile is not experimental. */
     assert(boot(192)==192 && !carplay_video_profile_did_fallback());
+    /* Chosen in Settings during a session: nothing changes until the next session
+     * starts, which then runs it as a trial. */
+    assert(boot(192)==192 && !carplay_video_profile_session_start());
+    unsigned sharper=0; for(unsigned i=0;i<carplay_video_profile_count();++i) if(carplay_video_profile_at(i)->height==360) sharper=i;
+    assert(carplay_video_profile_select(sharper)==ESP_OK && carplay_video_profile_current()->height==192);
+    assert(carplay_video_profile_session_start() && carplay_video_profile_current()->height==360);
+    assert(!carplay_video_profile_session_start());              /* Applied once. */
+    assert(carplay_video_profile_begin()); carplay_video_profile_confirm();
+    assert(boot(192)==360);                                      /* Kept across boots, same firmware. */
+    /* Too slow mid-session: the next session, not just the next boot, is safe. */
+    assert(boot(192)==360 && carplay_video_profile_select(sharper)==ESP_OK && carplay_video_profile_session_start());
+    assert(carplay_video_profile_begin()); carplay_video_profile_fallback();
+    assert(carplay_video_profile_current()->height==360);
+    assert(carplay_video_profile_session_start() && carplay_video_profile_current()->height==192 && carplay_video_profile_did_fallback());
     return 0;
 }

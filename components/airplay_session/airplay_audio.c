@@ -37,6 +37,7 @@ typedef struct {
     int64_t start_at, next_at;
     uint32_t sent, failed, starved;
     bool live;      /* true: real microphone; false: sealed silence */
+    bool call;      /* live, for a telephony stream: echo cancellation is on */
     int peak;
 } uplink_t;
 typedef struct {
@@ -89,6 +90,7 @@ static void clear(audio_slot_t *s) {
     if (s->type) {
         close(s->data); close(s->control);
         if(s->sink_generation) sink.close(s->sink_generation);
+        if(s->mic.call && sink.mic_call) sink.mic_call(false);
         if(s->mic.live && sink.mic_stop) sink.mic_stop();
         ESP_LOGI("AUDIO","stop type=%u usage=%s packets=%lu pcm_bytes=%lu bad=%lu auth_errors=%lu format_errors=%lu sink_drops=%lu uplink=%s sent=%lu failed=%lu starved=%lu",
             s->type,s->usage,(unsigned long)s->packets,(unsigned long)s->bytes,(unsigned long)s->bad,
@@ -151,6 +153,8 @@ static void start_uplink(audio_slot_t *s,const char *reason) {
     if (!m->wanted || m->running) return;
     m->running=true; m->next_at=esp_timer_get_time();
     m->live=sink.mic_start && sink.mic_read && mic_samples && sink.mic_start();
+    m->call=m->live && !strcmp(s->usage,"telephony") && sink.mic_call;
+    if (m->call) sink.mic_call(true);
     if (m->live) ESP_LOGI("AUDIO","uplink=mic start type=%u usage=%s reason=%s rate=%u channels=%u frames=%u",
         s->type,s->usage,reason,s->rate,s->channels,m->frames);
     else ESP_LOGW("AUDIO","uplink=silence start type=%u usage=%s reason=%s rate=%u channels=%u frames=%u (no microphone)",

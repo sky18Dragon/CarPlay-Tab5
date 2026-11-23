@@ -8,10 +8,13 @@ idf_component_register(
         "core/audio_resample.c"
         "core/video_queue.c"
         "core/touch.c"
+        "core/battery.c"
+        "echo_cancel.c"
         "core/rtsp_stream.c"
         "app_main.c"
         "sd_log.c"
         "power_status.c"
+        "board_io.c"
         "app_session.c"
         "entropy_source.c"
         "airplay_service.c"
@@ -21,6 +24,7 @@ idf_component_register(
         "core/ncm_descriptor.c"
         "app_ui.c"
         "pairing_reset.c"
+        "pair_store.c"
         "video_output.cpp"
         "audio_output.c"
         "audio_routes.c"
@@ -49,6 +53,7 @@ idf_component_register(
         "usb"
         "mbedtls"
         "nvs_flash"
+        "speexdsp"
         "bootloader_support"
         "esp_driver_ppa"
         "esp_lcd"
@@ -56,7 +61,7 @@ idf_component_register(
         "esp_mm"
 )
 
-# Runs on every video frame; the project default is -Og.
+# Runs on every video frame. Kept explicit in case the project level changes.
 set_source_files_properties(core/pixel_convert.c PROPERTIES COMPILE_OPTIONS "-O2")
 
 # app_ui.c takes the panel handle that the BSP does not expose.

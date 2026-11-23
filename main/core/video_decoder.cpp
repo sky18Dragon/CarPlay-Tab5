@@ -120,7 +120,7 @@ cp_decode_result cp_decoder_decode(cp_decoder *d,const uint8_t *data,size_t size
 #ifdef ESP_PLATFORM
     if(d->sink) {
         const delivery item={*frame,d->sink,d->sink_context};
-        if(tab5_recon_post(deliver,&item,sizeof(item))) return CP_DECODE_FRAME;
+        if(tab5_recon_post_reader(deliver,&item,sizeof(item),frame->planes[0])) return CP_DECODE_FRAME;
     }
     tab5_recon_drain();
 #endif

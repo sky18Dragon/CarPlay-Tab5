@@ -7,13 +7,17 @@
 // 890x240 is the default: the same 16:9 shape laid out at 890 wide, so every part
 // of the interface, the side bar included, is 15% larger than at 1024. 1280/890
 // rounds to the PPA's 23/16 with one column to spare. At 17 frames a second
-// 1024x240 overflowed the decoder about once in ten minutes.
+// 1024x240 overflowed the decoder about once in ten minutes. That was before the
+// parallel decoder and queue back-pressure; with both, a frame that cannot be
+// decoded in time slows the phone down instead of overflowing, so the caps are
+// set from measured decode times: about 23 ms a frame at 890x240 and 55 ms at
+// 1024x360 on average, roughly double that during fast map panning.
 static const carplay_video_profile_t video_profiles[] = {
 {1024,192,16,"1024x192",false,16,9},
-{890,240,16,"890x240",true,16,9},
+{890,240,20,"890x240",true,16,9},
 {480,288,6,"480x288",true,480,288},
-{1024,360,7,"1024x360",true,16,9},
+{1024,360,10,"1024x360",true,16,9},
 {640,384,5,"640x384",true,640,384},
 {852,480,5,"852x480",true,852,480},
-{1024,576,5,"1024x576",true,16,9},
+{1024,576,8,"1024x576",true,16,9},
 };

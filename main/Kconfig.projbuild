@@ -15,4 +15,25 @@ config TAB5_IAP2_NCM_INTERFACE
         Identification profile for the intended iPhone USB NCM configuration.
         Must be established from descriptors; the S3 default is not assumed.
 
+choice TAB5_ECHO
+    prompt "Echo cancellation for phone calls"
+    default TAB5_ECHO_ESPSR
+    help
+        Removes the Tab5 speaker's sound from the microphone during calls, so the
+        other person does not hear themselves.
+
+    config TAB5_ECHO_ESPSR
+        bool "Espressif ESP-SR (best quality; closed binaries, Espressif licence)"
+        help
+            Full-duplex echo canceller from espressif/esp-sr. Its libraries are
+            binary-only under the Espressif licence, so this build cannot be
+            distributed under the GPL alone. Use SpeexDSP for shareable builds.
+
+    config TAB5_ECHO_SPEEX
+        bool "SpeexDSP (open source, BSD; can be shared with the GPL source)"
+
+    config TAB5_ECHO_NONE
+        bool "None"
+endchoice
+
 endmenu

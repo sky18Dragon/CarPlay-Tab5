@@ -11,6 +11,8 @@ extern "C" {
  * alternate audio (navigation prompts). Every stream is resampled to 48 kHz. */
 #define TAB5_AUDIO_LANES 2
 esp_err_t tab5_audio_init(void);
+/* Lets the audio task open the codecs; call once the display and USB are up. */
+void tab5_audio_begin(void);
 esp_err_t tab5_audio_routes_init(void);
 /* Start replaces whatever the lane played before. Never called from the USB callback. */
 esp_err_t tab5_audio_start(unsigned lane,uint64_t generation,uint32_t rate,unsigned channels);
@@ -27,6 +29,11 @@ void tab5_audio_duck(bool ducked);
 /* Microphone: reference counted; samples are 48 kHz mono averaged from both mics. */
 esp_err_t tab5_mic_start(void);
 void tab5_mic_stop(void);
+/* True while a phone call uses the microphone: its audio then passes through the
+ * echo canceller (main/echo_cancel.h) with the speaker output as the reference. */
+void tab5_mic_call(bool active);
+/* Microphone level, 0-100 %: 12 to 37 dB of codec gain. 72 % is the old 30 dB. */
+void tab5_mic_set_level(int percent);
 /* Fills exactly `frames` samples at rate (8, 16, 24 or 48 kHz) or returns 0. */
 size_t tab5_mic_read(unsigned rate,int16_t *samples,size_t frames);
 #ifdef __cplusplus

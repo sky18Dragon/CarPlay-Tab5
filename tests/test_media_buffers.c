@@ -52,7 +52,9 @@ int main(void)
     assert(cp_video_pop(&q,1,out,sizeof(out),&unit) && unit.pts==11 && !memcmp(out,data,6));
     assert(cp_video_push(&q,1,data,12,12,false)); /* ring wrap */
     assert(cp_video_pop(&q,1,out,sizeof(out),&unit) && !memcmp(out,data,12));
+    assert(cp_video_room(&q,2,2) && !cp_video_room(&q,17,2) && !cp_video_room(&q,2,0));
     for(unsigned i=0;i<CP_VIDEO_MAX_UNITS;++i) assert(cp_video_push(&q,1,data,2,13+i,false));
+    assert(!cp_video_room(&q,2,CP_VIDEO_MAX_UNITS) && !cp_video_room(&q,2,2));
     assert(!cp_video_push(&q,1,data,2,13+CP_VIDEO_MAX_UNITS,false)); /* count overload breaks reference chain */
     assert(q.count==0 && cp_video_take_idr_request(&q));
     assert(cp_video_push(&q,1,data,16,17,true));

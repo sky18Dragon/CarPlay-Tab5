@@ -12,6 +12,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "soc/soc.h"
+#include "tab5_recon_queue.h"
 #include <atomic>
 #include <stdlib.h>
 #include <utility>
@@ -21,7 +22,10 @@ namespace {
 // submit runs in the screen task. draw serializes display access so that
 // tab5_video_start() cannot be followed by a frame of the stream it just ended.
 // Lock order: draw, mutex.
-SemaphoreHandle_t mutex,draw;
+SemaphoreHandle_t mutex,draw,room;   // room: given whenever the worker takes a frame
+// Hold an arriving frame while this many are already waiting, for at most this long.
+constexpr unsigned kHoldUnits=2;   // fewer queued frames, less touch lag
+constexpr int64_t kHoldUs=250000;
 TaskHandle_t worker_task,presenter_task;
 // Decoding and display run in parallel on the two cores. Three slots rotate
 // between them, so the display may skip a frame without touching the references
@@ -31,7 +35,8 @@ struct FrameSlot { uint8_t *memory; unsigned width,height; uint64_t generation; 
 constexpr size_t slot_bytes=1280*720*3/2;
 // The panel stretches each row into several, so this restores some of the contrast
 // between rows. 128 is half of the difference from the rows around a pixel.
-constexpr unsigned sharpen_strength=128;
+std::atomic<unsigned> sharpen_strength{128};   // Settings: 0 off, 128 normal, 255 strong.
+std::atomic<bool> judge_begun{false};          // Cleared at each session start.
 FrameSlot slots[3];
 FrameSlot *filling=&slots[0],*showing=&slots[1],*ready=&slots[2];
 bool frame_ready;
@@ -44,7 +49,7 @@ bool lost;
 // Frame-level counters: submit runs in the screen task, the rest in the worker.
 struct Stats {
     std::atomic<uint32_t> submitted{0},idr{0},busy{0},rejected{0},decoded{0},pending{0},errors{0},ui_failed{0},
-        starts{0},decoders{0},skipped{0},pack_total_ms{0},decode_max_ms{0},decode_total_ms{0},ui_max_ms{0},ui_total_ms{0},width{0},height{0};
+        starts{0},decoders{0},skipped{0},pack_total_ms{0},decode_max_ms{0},decode_total_ms{0},ui_max_ms{0},ui_total_ms{0},width{0},height{0},held{0};
 } stats;
 void log_stats() {
     static uint32_t seen,seen_starts; static int64_t last;
@@ -52,27 +57,35 @@ void log_stats() {
     const int64_t now=esp_timer_get_time();
     if((total==seen && starts==seen_starts) || now-last<1000000) return;
     seen=total; seen_starts=starts; last=now;
-    ESP_LOGI("VIDEO","STATS sub=%lu idr=%lu busy=%lu rej=%lu dec=%lu pend=%lu err=%lu ui_fail=%lu starts=%lu decoders=%lu skip=%lu pack_total=%lums decode_max=%lums decode_total=%lums ui_max=%lums ui_total=%lums size=%lux%lu",
+    tab5_recon_stats_t recon={};
+    tab5_recon_get_stats(&recon);
+    ESP_LOGI("VIDEO","RECON recon_total=%llums reader_total=%llums reader_wait=%llums picture_waits=%lu parse_wait=%llums stage_wait=%llums deblock=%llums expand=%llums",
+        recon.recon_us/1000,recon.reader_us/1000,recon.wait_us/1000,recon.waits,
+        recon.parse_wait_us/1000,recon.stage_wait_us/1000,recon.deblock_us/1000,recon.expand_us/1000);
+    ESP_LOGI("VIDEO","STATS sub=%lu idr=%lu busy=%lu rej=%lu dec=%lu pend=%lu err=%lu ui_fail=%lu starts=%lu decoders=%lu skip=%lu pack_total=%lums decode_max=%lums decode_total=%lums ui_max=%lums ui_total=%lums size=%lux%lu held=%lu",
         (unsigned long)stats.submitted,(unsigned long)stats.idr,(unsigned long)stats.busy,(unsigned long)stats.rejected,
         (unsigned long)stats.decoded,(unsigned long)stats.pending,(unsigned long)stats.errors,(unsigned long)stats.ui_failed,
         (unsigned long)starts,(unsigned long)stats.decoders,(unsigned long)stats.skipped,(unsigned long)stats.pack_total_ms,(unsigned long)stats.decode_max_ms,(unsigned long)stats.decode_total_ms,(unsigned long)stats.ui_max_ms,
-        (unsigned long)stats.ui_total_ms,(unsigned long)stats.width,(unsigned long)stats.height);
+        (unsigned long)stats.ui_total_ms,(unsigned long)stats.width,(unsigned long)stats.height,(unsigned long)stats.held);
 }
 void note_max(std::atomic<uint32_t> &slot,int64_t start_us) {
     uint32_t ms=uint32_t((esp_timer_get_time()-start_us)/1000);
     if(ms>slot) slot=ms;
 }
 // More than one rejected frame in five means the profile outruns this board.
+// Counted from the trial's own first frame, not since boot.
 void judge_profile() {
     constexpr uint32_t window=100,limit=5;
-    static bool begun,trial;
-    if(!begun) { begun=true; trial=carplay_video_profile_begin(); }
+    static bool trial; static uint32_t base_submitted,base_rejected;
+    if(!judge_begun.exchange(true)) {
+        trial=carplay_video_profile_begin(); base_submitted=stats.submitted; base_rejected=stats.rejected;
+    }
     if(!trial) return;
-    const uint32_t submitted=stats.submitted;
+    const uint32_t submitted=stats.submitted-base_submitted,rejected=stats.rejected-base_rejected;
     if(submitted<window) return;
     trial=false;
-    if(uint64_t(stats.rejected)*limit>submitted) {
-        ESP_LOGW("VIDEO","Profile too slow: rej=%lu of %lu; next boot uses the safe profile",(unsigned long)stats.rejected,(unsigned long)submitted);
+    if(uint64_t(rejected)*limit>submitted) {
+        ESP_LOGW("VIDEO","Profile too slow: rej=%lu of %lu; the next session uses the safe profile",(unsigned long)rejected,(unsigned long)submitted);
         carplay_video_profile_fallback();
     } else carplay_video_profile_confirm();
 }
@@ -94,7 +107,7 @@ bool idr(const uint8_t *p,size_t size) {
 }
 bool pack_frame(FrameSlot &slot,const cp_i420 &frame,uint64_t stream) {
     const int64_t start=esp_timer_get_time();
-    if(!cp_i420_pack(&frame,slot.memory,slot_bytes,sharpen_strength)) return false;
+    if(!cp_i420_pack(&frame,slot.memory,slot_bytes,sharpen_strength.load(std::memory_order_relaxed))) return false;
     slot.width=frame.width; slot.height=frame.height; slot.generation=stream;
     stats.pack_total_ms+=uint32_t((esp_timer_get_time()-start)/1000);
     return true;
@@ -102,8 +115,9 @@ bool pack_frame(FrameSlot &slot,const cp_i420 &frame,uint64_t stream) {
 // The stream of the current decoder. Set while no decoder exists, so that no frame
 // is on its way here.
 uint64_t sink_stream;
-// Runs on the reconstruction task, which alone owns the filling slot and decodes
-// nothing until this returns, so the time spent here limits the frame rate.
+// Runs on the decoder's reader task, on the parsing core, one frame at a time and
+// in order, so it alone owns the filling slot. Reconstruction of the next frame
+// continues meanwhile; parsing shares this core.
 void on_frame(const cp_i420 *frame,void *) {
     const bool copied=pack_frame(*filling,*frame,sink_stream);
     xSemaphoreTake(mutex,portMAX_DELAY);
@@ -141,6 +155,7 @@ void worker(void *) {
     cp_decoder *decoder=nullptr; uint64_t decoder_revision=0;
     for(;;) {
         ulTaskNotifyTake(pdTRUE,pdMS_TO_TICKS(200));
+        int64_t busy_since=esp_timer_get_time();
         log_stats();
         for(;;) {
             cp_video_unit unit; uint64_t current,version;
@@ -149,6 +164,7 @@ void worker(void *) {
             current=generation; version=revision;
             bool have=cp_video_pop(&queue,current,input,512*1024,&unit);
             xSemaphoreGive(mutex);
+            if(have) xSemaphoreGive(room);
             if(decoder_revision!=version) {
                 cp_decoder_destroy(decoder); decoder=nullptr; decoder_revision=version;
             }
@@ -173,7 +189,10 @@ void worker(void *) {
                 cp_video_reset(&queue,generation); ++revision;
             }
             xSemaphoreGive(mutex);
-            taskYIELD();
+            // At the higher frame rates this core can stay busy for seconds. Rest
+            // one tick now and then, so the idle task (and its watchdog) can run.
+            if(esp_timer_get_time()-busy_since>250000) { vTaskDelay(1); busy_since=esp_timer_get_time(); }
+            else taskYIELD();
         }
     }
 }
@@ -195,12 +214,13 @@ esp_err_t tab5_video_init(void) {
     input=(uint8_t *)heap_caps_malloc(512*1024,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
     mutex=xSemaphoreCreateMutex();
     draw=xSemaphoreCreateMutex();
+    if(!room) room=xSemaphoreCreateBinary();
     bool slots_ok=true;
     for(FrameSlot &slot:slots) {
         slot.memory=(uint8_t *)heap_caps_aligned_alloc(16,slot_bytes,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
         slots_ok=slots_ok && slot.memory;
     }
-    if(storage && input && mutex && draw && slots_ok && cp_video_init(&queue,storage,512*1024) &&
+    if(storage && input && mutex && draw && room && slots_ok && cp_video_init(&queue,storage,512*1024) &&
        xTaskCreatePinnedToCore(presenter,"video_show",8192,nullptr,4,&presenter_task,0)==pdPASS) {
         if(xTaskCreatePinnedToCore(worker,"video_decode",12288,nullptr,4,&worker_task,1)==pdPASS) return ESP_OK;
         vTaskDelete(presenter_task); presenter_task=nullptr;
@@ -211,8 +231,10 @@ esp_err_t tab5_video_init(void) {
     free(storage); free(input); storage=input=nullptr; mutex=draw=nullptr; worker_task=nullptr;
     return ESP_ERR_NO_MEM;
 }
+void tab5_video_set_sharpening(unsigned strength) { sharpen_strength=strength>255?255:strength; }
 void tab5_video_start(uint64_t epoch) {
     if(!worker_task) return;
+    if(epoch) judge_begun=false;   // A new session may run a newly chosen profile as a trial.
     ++stats.starts;
     ESP_LOGI("VIDEO","START epoch=%llu clears canvas",(unsigned long long)epoch);
     xSemaphoreTake(draw,portMAX_DELAY);
@@ -223,12 +245,31 @@ void tab5_video_start(uint64_t epoch) {
     xTaskNotifyGive(worker_task);
 }
 void tab5_video_stop(void) { tab5_video_start(0); }
+std::atomic<bool> paused{false};
+void tab5_video_pause(bool value) {
+    const bool was=paused.exchange(value);
+    if(was && !value) {
+        // Frames were dropped: start again from a keyframe.
+        portENTER_CRITICAL(&loss_lock); lost=true; portEXIT_CRITICAL(&loss_lock);
+    }
+}
 bool tab5_video_submit(uint64_t epoch,const uint8_t *data,size_t size,uint64_t pts) {
     if(!worker_task || !data || !size || size>512*1024) return false;
+    if(paused.load(std::memory_order_relaxed)) return true;
     bool key=idr(data,size);
     ++stats.submitted; if(key) ++stats.idr;
     if(xSemaphoreTake(mutex,pdMS_TO_TICKS(5))!=pdTRUE) { ++stats.busy; mark_loss(epoch); xTaskNotifyGive(worker_task); return false; }
     if(take_loss()) { cp_video_reset(&queue,generation); ++revision; }
+    // Back-pressure: when decoding falls behind, hold this frame (and so the
+    // phone's TCP stream) for a moment instead of overflowing the queue, which
+    // would cost a keyframe. The phone then sends fewer frames, not broken ones.
+    for(int64_t deadline=esp_timer_get_time()+kHoldUs;
+        epoch==generation && !queue.waiting_idr && !cp_video_room(&queue,size,kHoldUnits) && esp_timer_get_time()<deadline;) {
+        xSemaphoreGive(mutex);
+        ++stats.held;
+        xSemaphoreTake(room,pdMS_TO_TICKS(20));
+        xSemaphoreTake(mutex,portMAX_DELAY);
+    }
     uint64_t dropped=queue.dropped;
     bool ok=cp_video_push(&queue,epoch,data,size,pts,key);
     if(queue.dropped!=dropped) ++revision;

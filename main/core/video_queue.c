@@ -35,6 +35,12 @@ bool cp_video_pop(cp_video_queue *q,uint64_t generation,uint8_t *out,size_t capa
     q->read=(q->read+u.size)%q->capacity; q->bytes-=u.size;
     q->head=(q->head+1)%CP_VIDEO_MAX_UNITS; --q->count; *unit=u; return true;
 }
+bool cp_video_room(const cp_video_queue *q,size_t size,unsigned units)
+{
+    if(!q) return false;
+    if(units>CP_VIDEO_MAX_UNITS) units=CP_VIDEO_MAX_UNITS;
+    return q->count<units && size<=q->capacity && size<=q->capacity-q->bytes;
+}
 bool cp_video_take_idr_request(cp_video_queue *q)
 { if(!q) return false; bool request=q->request_idr; q->request_idr=false; return request; }
 bool cp_video_config_changed(const uint8_t *current,size_t current_size,const uint8_t *next,size_t next_size)

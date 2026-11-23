@@ -8,8 +8,10 @@
 #include "esp_log.h"
 #include "esp_lvgl_port.h"
 #include "airplay_host_ui.h"
+#include "airplay_software_provider.h"
 #include "airplay_control_port.h"
 #include "audio_output.h"
+#include "video_output.h"
 #include "pairing_reset.h"
 #include "esp_timer.h"
 #include "esp_app_desc.h"
@@ -43,14 +45,27 @@ static int width,height;
 static cp_touch touch;
 static tab5_touch_sink sink;
 static void *sink_context;
-/* Local settings page, opened from the CarPlay "Tab5 设置" icon (requestUI).
+/* Local settings page, opened from the CarPlay "Tab5 Settings" icon (requestUI).
  * While it is open, video is not drawn and touches stay on Tab5. */
 #define SETTINGS_NAMESPACE "tab5_ui"
 #define VOLUME_DEFAULT 30
 #define BRIGHTNESS_DEFAULT 40
 #define BRIGHTNESS_MIN 10
-static lv_obj_t *settings,*volume_value,*brightness_value;
-static bool settings_open;
+#define MIC_LEVEL_DEFAULT 72          /* 30 dB, the fixed gain before this setting */
+static const unsigned sharpen_levels[]={0,128,255};
+static const char *const sharpen_names[]={"Off","Normal","Strong",""};
+#define SHARPEN_DEFAULT 1
+static const unsigned picture_heights[]={240,360,576};
+static const char *const picture_names[]={"Smooth","Sharper","Sharpest",""};
+static const uint32_t screen_off_ms[]={0,60000,300000};
+static const char *const screen_off_names[]={"Never","1 min","5 min",""};
+static int brightness_now=40;     /* restored when the screen wakes */
+static unsigned screen_off_choice;
+static bool screen_off;
+static lv_obj_t *settings,*volume_value,*brightness_value,*mic_value,*settings_battery,*picture_note;
+/* Written under the LVGL lock, read by the video presenter for the overlay. */
+static volatile int battery_percent=-1;
+static volatile bool battery_charging,battery_low,shutting_down,right_hand_ui;
 /* The BSP keeps its panel handle private; bsp_display_start() is its only caller. */
 lv_display_t *__real_lvgl_port_add_disp_dsi(const lvgl_port_display_cfg_t *,const lvgl_port_display_dsi_cfg_t *);
 lv_display_t *__wrap_lvgl_port_add_disp_dsi(const lvgl_port_display_cfg_t *config,const lvgl_port_display_dsi_cfg_t *dsi)
@@ -66,13 +81,34 @@ static int load_setting(const char *key,int fallback,int low,int high)
     esp_err_t e=nvs_get_u8(h,key,&value); nvs_close(h);
     return e==ESP_OK && value>=low && value<=high ? value : fallback;
 }
-static void save_setting(const char *key,int value)
+/* Writing flash stalls both cores for tens of milliseconds, long enough to break
+ * up the music. While the Settings page is open, changes are kept here and
+ * written once when it closes. */
+static const char *const setting_keys[]={"volume","brightness","mic","sharpen","screen_off","rhd"};
+#define SETTING_COUNT (sizeof(setting_keys)/sizeof(setting_keys[0]))
+static int pending_settings[SETTING_COUNT];
+static bool pending_flags[SETTING_COUNT];
+static int pending_picture=-1;
+static bool settings_open;
+static void write_setting(const char *key,int value)
 {
     nvs_handle_t h;
     if(nvs_open(SETTINGS_NAMESPACE,NVS_READWRITE,&h)!=ESP_OK) return;
     if(nvs_set_u8(h,key,(uint8_t)value)==ESP_OK) nvs_commit(h);
     nvs_close(h);
     ESP_LOGI("SETTINGS","saved %s=%d",key,value);
+}
+static void save_setting(const char *key,int value)
+{
+    for(unsigned i=0;settings_open && i<SETTING_COUNT;++i)
+        if(!strcmp(setting_keys[i],key)) { pending_settings[i]=value; pending_flags[i]=true; return; }
+    write_setting(key,value);
+}
+static void flush_settings(void)
+{
+    for(unsigned i=0;i<SETTING_COUNT;++i)
+        if(pending_flags[i]) { pending_flags[i]=false; write_setting(setting_keys[i],pending_settings[i]); }
+    if(pending_picture>=0) { carplay_video_profile_select((unsigned)pending_picture); pending_picture=-1; }
 }
 static void touch_callback(lv_event_t *event)
 {
@@ -243,14 +279,108 @@ static void show_percent(lv_obj_t *value_label,int percent)
 static void slider_event(lv_event_t *event)
 {
     lv_obj_t *slider=lv_event_get_target(event);
-    const bool is_volume=lv_event_get_user_data(event)!=NULL;
+    const intptr_t which=(intptr_t)lv_event_get_user_data(event);   /* 0 brightness, 1 volume, 2 microphone */
     const int value=lv_slider_get_value(slider);
     const lv_event_code_t code=lv_event_get_code(event);
     if(code==LV_EVENT_VALUE_CHANGED) {
-        if(is_volume) { tab5_audio_set_volume(value); show_percent(volume_value,value); }
-        else { bsp_display_brightness_set(value); show_percent(brightness_value,value); }
+        if(which==1) { tab5_audio_set_volume(value); show_percent(volume_value,value); }
+        else if(which==2) { tab5_mic_set_level(value); show_percent(mic_value,value); }
+        else { brightness_now=value; bsp_display_brightness_set(value); show_percent(brightness_value,value); }
     } else if(code==LV_EVENT_RELEASED) {
-        save_setting(is_volume?"volume":"brightness",value);   /* flash once per drag */
+        save_setting(which==1?"volume":which==2?"mic":"brightness",value);   /* flash once per drag */
+    }
+}
+/* Right-hand drive moves the CarPlay dock to the right. The phone reads it when
+ * a session starts, so it applies from the next connection. */
+static void drive_event(lv_event_t *event)
+{
+    if(lv_event_get_code(event)!=LV_EVENT_VALUE_CHANGED) return;
+    const bool right=lv_obj_has_state(lv_event_get_target(event),LV_STATE_CHECKED);
+    airplay_software_provider_set_right_hand_drive(right);
+    right_hand_ui=right;
+    save_setting("rhd",right?1:0);
+}
+static void drive_row(lv_obj_t *parent,int y,bool right)
+{
+    lv_obj_t *caption=lv_label_create(parent); lv_label_set_text(caption,"Right-hand drive");
+    lv_obj_set_style_text_color(caption,lv_color_hex(UI_TEXT),0);
+    lv_obj_set_style_text_font(caption,&lv_font_montserrat_28,0);
+    lv_obj_set_pos(caption,96,y);
+    lv_obj_t *note=lv_label_create(parent); lv_label_set_text(note,"Dock on the right. Applies from the next connection.");
+    lv_obj_set_style_text_color(note,lv_color_hex(UI_MUTED),0);
+    lv_obj_set_pos(note,96,y+40);
+    lv_obj_t *toggle=lv_switch_create(parent);
+    lv_obj_set_size(toggle,96,48); lv_obj_align(toggle,LV_ALIGN_TOP_RIGHT,-96,y);
+    lv_obj_set_ext_click_area(toggle,24);
+    lv_obj_set_style_bg_color(toggle,lv_color_hex(UI_ACCENT),LV_PART_INDICATOR|LV_STATE_CHECKED);
+    if(right) lv_obj_add_state(toggle,LV_STATE_CHECKED);
+    lv_obj_add_event_cb(toggle,drive_event,LV_EVENT_VALUE_CHANGED,NULL);
+}
+/* One of a few fixed options, as a row of buttons. */
+static lv_obj_t *choice_row(lv_obj_t *parent,const char *name,int y,const char *const *names,unsigned selected,lv_event_cb_t callback)
+{
+    lv_obj_t *caption=lv_label_create(parent); lv_label_set_text(caption,name);
+    lv_obj_set_style_text_color(caption,lv_color_hex(UI_TEXT),0);
+    lv_obj_set_style_text_font(caption,&lv_font_montserrat_28,0);
+    lv_obj_set_pos(caption,96,y);
+    lv_obj_t *buttons=lv_buttonmatrix_create(parent);
+    lv_buttonmatrix_set_map(buttons,(const char **)names);
+    lv_buttonmatrix_set_button_ctrl_all(buttons,LV_BUTTONMATRIX_CTRL_CHECKABLE);
+    lv_buttonmatrix_set_one_checked(buttons,true);
+    if(selected<3) lv_buttonmatrix_set_button_ctrl(buttons,selected,LV_BUTTONMATRIX_CTRL_CHECKED);
+    lv_obj_set_size(buttons,width-192,72); lv_obj_set_pos(buttons,96,y+48);
+    lv_obj_set_style_bg_opa(buttons,LV_OPA_TRANSP,0); lv_obj_set_style_border_width(buttons,0,0);
+    lv_obj_set_style_pad_all(buttons,0,0);
+    lv_obj_set_style_bg_color(buttons,lv_color_hex(0x203040),LV_PART_ITEMS);
+    lv_obj_set_style_bg_color(buttons,lv_color_hex(UI_ACCENT),LV_PART_ITEMS|LV_STATE_CHECKED);
+    lv_obj_set_style_text_color(buttons,lv_color_hex(UI_TEXT),LV_PART_ITEMS);
+    lv_obj_set_style_text_color(buttons,lv_color_hex(UI_BG),LV_PART_ITEMS|LV_STATE_CHECKED);
+    lv_obj_set_style_text_font(buttons,&lv_font_montserrat_28,LV_PART_ITEMS);
+    lv_obj_add_event_cb(buttons,callback,LV_EVENT_VALUE_CHANGED,NULL);
+    return buttons;
+}
+static unsigned chosen(lv_event_t *event) { return lv_buttonmatrix_get_selected_button(lv_event_get_target(event)); }
+static void picture_note_update(void)
+{
+    lv_label_set_text(picture_note,carplay_video_profile_did_fallback()?
+        "The last choice was too slow and fell back to the safe setting. Applies from the next connection.":
+        "Sharper is slower to move. Applies from the next connection.");
+}
+static void picture_event(lv_event_t *event)
+{
+    const unsigned choice=chosen(event);
+    if(choice>=3) return;
+    for(unsigned i=0;i<carplay_video_profile_count();++i)
+        if(carplay_video_profile_at(i)->height==picture_heights[choice]) {
+            if(settings_open) pending_picture=(int)i; else carplay_video_profile_select(i);
+            break;
+        }
+    picture_note_update();
+    ESP_LOGI("SETTINGS","picture=%s from the next connection",picture_names[choice]);
+}
+static void sharpen_event(lv_event_t *event)
+{
+    const unsigned choice=chosen(event);
+    if(choice>=3) return;
+    tab5_video_set_sharpening(sharpen_levels[choice]); save_setting("sharpen",(int)choice);
+}
+static void screen_off_event(lv_event_t *event)
+{
+    const unsigned choice=chosen(event);
+    if(choice>=3) return;
+    screen_off_choice=choice; save_setting("screen_off",(int)choice);
+}
+/* Waiting screen only: dark after the chosen idle time, back on at a touch or a phone. */
+static void screen_timer(lv_timer_t *timer)
+{
+    (void)timer;
+    const uint32_t limit=screen_off_ms[screen_off_choice];
+    const bool idle_screen=ui_stage==CP_DETACHED && !settings_open && !pair_dialog_open && !pair_busy && !shutting_down;
+    const uint32_t inactive=lv_display_get_inactive_time(display);
+    if(screen_off) {
+        if(!limit || !idle_screen || inactive<1000) { screen_off=false; bsp_display_brightness_set(brightness_now); }
+    } else if(limit && idle_screen && inactive>=limit) {
+        screen_off=true; bsp_display_brightness_set(0);
     }
 }
 static void leave_video(void);
@@ -258,6 +388,8 @@ static void close_settings(void)
 {
     if(!settings_open) return;
     settings_open=false;
+    flush_settings();
+    tab5_video_pause(false);
     lv_obj_add_flag(settings,LV_OBJ_FLAG_HIDDEN);
     /* CarPlay sends frames only when its screen changes; ask for a full one so
      * the video comes back at once. The next frame re-enters video mode. */
@@ -273,6 +405,7 @@ static void open_settings(void)
     if(settings_open) return;
     deliver(cp_touch_cancel(&touch));
     settings_open=true;
+    tab5_video_pause(true);
     leave_video();
     lv_obj_remove_flag(settings,LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(settings);
@@ -284,7 +417,7 @@ static void settings_timer(lv_timer_t *timer)
     (void)timer;
     if(airplay_host_ui_take()) open_settings();
 }
-static lv_obj_t *settings_row(lv_obj_t *parent,const char *name,int y,int value,int low,lv_obj_t **value_label,bool is_volume)
+static lv_obj_t *settings_row(lv_obj_t *parent,const char *name,int y,int value,int low,lv_obj_t **value_label,intptr_t which)
 {
     lv_obj_t *caption=lv_label_create(parent); lv_label_set_text(caption,name);
     lv_obj_set_style_text_color(caption,lv_color_hex(UI_TEXT),0);
@@ -302,11 +435,11 @@ static lv_obj_t *settings_row(lv_obj_t *parent,const char *name,int y,int value,
     lv_obj_set_style_bg_color(slider,lv_color_hex(UI_ACCENT),LV_PART_INDICATOR);
     lv_obj_set_style_bg_color(slider,lv_color_hex(UI_ACCENT),LV_PART_KNOB);
     lv_obj_set_style_pad_all(slider,12,LV_PART_KNOB);
-    lv_obj_add_event_cb(slider,slider_event,LV_EVENT_VALUE_CHANGED,is_volume?(void *)1:NULL);
-    lv_obj_add_event_cb(slider,slider_event,LV_EVENT_RELEASED,is_volume?(void *)1:NULL);
+    lv_obj_add_event_cb(slider,slider_event,LV_EVENT_VALUE_CHANGED,(void *)which);
+    lv_obj_add_event_cb(slider,slider_event,LV_EVENT_RELEASED,(void *)which);
     return slider;
 }
-static void build_settings(lv_obj_t *screen,int volume,int brightness)
+static void build_settings(lv_obj_t *screen,int volume,int brightness,int mic,unsigned sharpen,bool right_hand)
 {
     settings=lv_obj_create(screen);
     lv_obj_remove_style_all(settings);
@@ -315,20 +448,43 @@ static void build_settings(lv_obj_t *screen,int volume,int brightness)
     lv_obj_set_style_bg_opa(settings,LV_OPA_COVER,0);
     lv_obj_add_flag(settings,LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(settings,LV_OBJ_FLAG_SCROLLABLE);
+    /* Pinned header: title, battery, back. */
     lv_obj_t *heading=lv_label_create(settings); lv_label_set_text(heading,"Tab5 Settings");
     lv_obj_set_style_text_color(heading,lv_color_hex(UI_ACCENT),0);
     lv_obj_set_style_text_font(heading,&lv_font_montserrat_40,0);
-    lv_obj_set_pos(heading,96,64);
-    settings_row(settings,"Volume",200,volume,0,&volume_value,true);
-    settings_row(settings,"Brightness",360,brightness,BRIGHTNESS_MIN,&brightness_value,false);
+    lv_obj_set_pos(heading,96,48);
     lv_obj_t *back=lv_button_create(settings);
-    lv_obj_set_size(back,360,88); lv_obj_align(back,LV_ALIGN_BOTTOM_MID,0,-64);
+    lv_obj_set_size(back,320,72); lv_obj_align(back,LV_ALIGN_TOP_RIGHT,-96,40);
     lv_obj_set_style_bg_color(back,lv_color_hex(UI_ACCENT),0);
     lv_obj_t *text=lv_label_create(back); lv_label_set_text(text,LV_SYMBOL_LEFT "  Back to CarPlay");
     lv_obj_set_style_text_color(text,lv_color_hex(UI_BG),0);
     lv_obj_set_style_text_font(text,&lv_font_montserrat_28,0);
     lv_obj_center(text);
     lv_obj_add_event_cb(back,back_event,LV_EVENT_CLICKED,NULL);
+    settings_battery=lv_label_create(settings); lv_label_set_text(settings_battery,"");
+    lv_obj_set_style_text_color(settings_battery,lv_color_hex(UI_MUTED),0);
+    lv_obj_set_style_text_font(settings_battery,&lv_font_montserrat_28,0);
+    lv_obj_align(settings_battery,LV_ALIGN_TOP_RIGHT,-96-320-40,58);
+    /* Scrolling list below. */
+    lv_obj_t *list=lv_obj_create(settings);
+    lv_obj_remove_style_all(list);
+    lv_obj_set_size(list,width,height-144); lv_obj_set_pos(list,0,144);
+    lv_obj_set_scroll_dir(list,LV_DIR_VER);
+    lv_obj_set_style_pad_bottom(list,48,0);
+    int y=16;
+    settings_row(list,"Volume",y,volume,0,&volume_value,1); y+=140;
+    settings_row(list,"Brightness",y,brightness,BRIGHTNESS_MIN,&brightness_value,0); y+=140;
+    settings_row(list,"Microphone",y,mic,0,&mic_value,2); y+=150;
+    unsigned picture=3;
+    for(unsigned i=0;i<3;++i) if(carplay_video_profile_current()->height==picture_heights[i]) picture=i;
+    choice_row(list,"Picture",y,picture_names,picture,picture_event);
+    picture_note=lv_label_create(list);
+    lv_obj_set_style_text_color(picture_note,lv_color_hex(UI_MUTED),0);
+    lv_obj_set_pos(picture_note,96,y+128);
+    picture_note_update(); y+=180;
+    choice_row(list,"Picture sharpening",y,sharpen_names,sharpen,sharpen_event); y+=150;
+    choice_row(list,"Screen off when unplugged",y,screen_off_names,screen_off_choice,screen_off_event); y+=150;
+    drive_row(list,y,right_hand);
     lv_obj_add_flag(settings,LV_OBJ_FLAG_HIDDEN);
 }
 esp_err_t tab5_ui_init(void)
@@ -370,12 +526,23 @@ esp_err_t tab5_ui_init(void)
     (void)nvs_flash_init();
     const int volume=load_setting("volume",VOLUME_DEFAULT,0,100);
     const int brightness=load_setting("brightness",BRIGHTNESS_DEFAULT,BRIGHTNESS_MIN,100);
+    const bool right_hand=load_setting("rhd",0,0,1)!=0;
+    const int mic=load_setting("mic",MIC_LEVEL_DEFAULT,0,100);
+    const unsigned sharpen=(unsigned)load_setting("sharpen",SHARPEN_DEFAULT,0,2);
+    screen_off_choice=(unsigned)load_setting("screen_off",0,0,2);
+    brightness_now=brightness;
+    right_hand_ui=right_hand;
     tab5_audio_set_volume(volume);
-    build_settings(screen,volume,brightness);
+    tab5_mic_set_level(mic);
+    tab5_video_set_sharpening(sharpen_levels[sharpen]);
+    airplay_software_provider_set_right_hand_drive(right_hand);
+    build_settings(screen,volume,brightness,mic,sharpen,right_hand);
     build_pairing(screen);
     lv_timer_create(settings_timer,100,NULL);
     lv_timer_create(pairing_timer,100,NULL);
-    ESP_LOGI("SETTINGS","volume=%d brightness=%d",volume,brightness);
+    lv_timer_create(screen_timer,1000,NULL);
+    ESP_LOGI("SETTINGS","volume=%d brightness=%d mic=%d sharpen=%u screen_off=%u right_hand_drive=%d",
+             volume,brightness,mic,sharpen,screen_off_choice,right_hand);
     ready=true;
     bsp_display_unlock(); return bsp_display_brightness_set(brightness);
 }
@@ -417,7 +584,7 @@ static void clear_framebuffers(void)
 }
 void tab5_ui_status(cp_stage stage,cp_error error)
 {
-    if(!ready || !bsp_display_lock(1000)) return;
+    if(!ready || shutting_down || !bsp_display_lock(1000)) return;
     ui_stage=stage;
     const char *hint="Preparing the connection.";
     switch(stage) {
@@ -444,22 +611,47 @@ void tab5_ui_status(cp_stage stage,cp_error error)
     else lv_obj_remove_flag(brand,LV_OBJ_FLAG_HIDDEN);
     if(stage!=CP_STREAMING) {
         deliver(cp_touch_cancel(&touch)); memset(&touch,0,sizeof(touch));
-        if(settings_open) { settings_open=false; lv_obj_add_flag(settings,LV_OBJ_FLAG_HIDDEN); }
+        if(settings_open) { settings_open=false; flush_settings(); lv_obj_add_flag(settings,LV_OBJ_FLAG_HIDDEN); }
         leave_video();
     }
     pair_refresh();
     bsp_display_unlock();
 }
+/* A small battery in the top corner away from the CarPlay dock, drawn into the
+ * panel frame buffer the PPA has just filled. The PPA invalidated that buffer in
+ * the cache before writing it, so only the rows drawn here need writing back.
+ * Landscape (x,y) is panel (y,width-1-x), as the rotation below. */
+static void draw_low_battery(void *framebuffer,int percent)
+{
+    enum { W=60, H=30, NUB=6, PAD=8, MARGIN=24, LINE=3 };
+    const uint16_t red=0xf904,dark=0x10c4;   /* RGB565 warning red and UI_BG */
+    uint16_t *fb=framebuffer;
+    const int x0=right_hand_ui?MARGIN+PAD:width-MARGIN-PAD-W-NUB,y0=MARGIN+PAD;
+    const int fill=(percent<0?0:percent>100?100:percent)*(W-4*LINE)/100;
+    for(int x=x0-PAD;x<x0+W+NUB+PAD;++x) for(int y=y0-PAD;y<y0+H+PAD;++y) {
+        const int dx=x-x0,dy=y-y0;
+        const bool body=dx>=0 && dx<W && dy>=0 && dy<H;
+        const bool outline=body && (dx<LINE || dx>=W-LINE || dy<LINE || dy>=H-LINE);
+        const bool nub=dx>=W && dx<W+NUB && dy>=H/3 && dy<H-H/3;
+        const bool level=body && dx>=2*LINE && dx<2*LINE+(fill<LINE?LINE:fill) && dy>=2*LINE && dy<H-2*LINE;
+        fb[(size_t)(width-1-x)*height+y]=outline||nub||level?red:dark;
+    }
+    const int first=width-(x0+W+NUB+PAD),last=width-1-(x0-PAD);
+    esp_cache_msync(fb+(size_t)first*height,(size_t)(last-first+1)*height*2,
+                    ESP_CACHE_MSYNC_FLAG_DIR_C2M|ESP_CACHE_MSYNC_FLAG_UNALIGNED);
+}
 bool tab5_ui_frame(const uint8_t *data,unsigned frame_width,unsigned frame_height)
 {
-    if(!ready || !data || !bsp_display_lock(1000)) return false;
+    if(!ready || !data) return false;
+    if(settings_open) return true;
+    if(!bsp_display_lock(1000)) return false;
     const bool resized=frame_width!=touch.video_width || frame_height!=touch.video_height;
     if(resized) {
         deliver(cp_touch_cancel(&touch));
         const carplay_video_profile_t *profile=carplay_video_profile_current();
         if(!cp_touch_configure(&touch,width,height,frame_width,frame_height,profile->aspect_width,profile->aspect_height)) { bsp_display_unlock(); return false; }
     }
-    if(settings_open || pair_dialog_open || pair_busy) { bsp_display_unlock(); return true; }
+    if(settings_open || pair_dialog_open || pair_busy || shutting_down) { bsp_display_unlock(); return true; }
     const bool entering=!video_visible;
     enter_video();
     const cp_touch area=touch;
@@ -478,6 +670,7 @@ bool tab5_ui_frame(const uint8_t *data,unsigned frame_width,unsigned frame_heigh
     };
     esp_err_t e=ppa_do_scale_rotate_mirror(scaler,&operation);
     if(e!=ESP_OK) { ESP_LOGE("VIDEO","PPA failed: %s",esp_err_to_name(e)); return false; }
+    if(battery_low && !battery_charging) draw_low_battery(framebuffers[hidden_buffer],battery_percent);
     if(!bsp_display_lock(1000)) return false;
     /* A status change may have returned the screen to LVGL during the PPA pass. */
     if(video_visible) {
@@ -485,6 +678,36 @@ bool tab5_ui_frame(const uint8_t *data,unsigned frame_width,unsigned frame_heigh
         if(e==ESP_OK) hidden_buffer^=1;
     }
     bsp_display_unlock(); return e==ESP_OK;
+}
+void tab5_ui_battery(int percent,bool charging,bool low)
+{
+    if(!ready || !bsp_display_lock(1000)) return;
+    battery_percent=percent; battery_charging=charging; battery_low=low;
+    char text[64];
+    const char *version=esp_app_get_description()->version;
+    if(percent<0) { snprintf(text,sizeof(text),"v%s",version); lv_label_set_text(settings_battery,""); }
+    else {
+        snprintf(text,sizeof(text),"v%s  |  %s %d%%",version,charging?"Charging":"Battery",percent);
+        lv_label_set_text_fmt(settings_battery,"%s %d%%",charging?"Charging":"Battery",percent);
+        lv_obj_set_style_text_color(settings_battery,lv_color_hex(low && !charging?UI_ERROR:UI_MUTED),0);
+    }
+    lv_label_set_text(mode,text);
+    lv_obj_set_style_text_color(mode,lv_color_hex(low && !charging?UI_ERROR:UI_MUTED),0);
+    bsp_display_unlock();
+}
+void tab5_ui_power_off_notice(void)
+{
+    if(!ready || !bsp_display_lock(1000)) return;
+    shutting_down=true;
+    deliver(cp_touch_cancel(&touch)); memset(&touch,0,sizeof(touch));
+    if(settings_open) { settings_open=false; flush_settings(); lv_obj_add_flag(settings,LV_OBJ_FLAG_HIDDEN); }
+    pair_close(); lv_obj_add_flag(pair_button,LV_OBJ_FLAG_HIDDEN);
+    leave_video();
+    lv_obj_remove_flag(brand,LV_OBJ_FLAG_HIDDEN);
+    lv_label_set_text(title,"Battery empty");
+    lv_label_set_text(detail,"Tab5 is turning off to protect the battery. Charge it over USB-C.");
+    lv_obj_set_style_text_color(detail,lv_color_hex(UI_ERROR),0);
+    bsp_display_unlock();
 }
 void tab5_ui_clear(void)
 {

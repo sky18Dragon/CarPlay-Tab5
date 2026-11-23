@@ -10,6 +10,10 @@ CONFIG_BSP_LCD_DPI_BUFFER_NUMS=2
 CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
 CONFIG_ESP32P4_REV_MIN_100=y
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_360=y
+# -O2 for everything. OpenH264 sets -O3 and pixel_convert.c -O2 themselves; this
+# covers the USB/NCM receive path, lwIP, ChaCha20-Poly1305 stream decryption and
+# audio, which share both cores with the decoder.
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
 
 CONFIG_USB_HOST_ENABLE_ENUM_FILTER_CALLBACK=y
 

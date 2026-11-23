@@ -22,6 +22,9 @@ void cp_video_reset(cp_video_queue *,uint64_t);
 bool cp_video_push(cp_video_queue *,uint64_t,const uint8_t *,size_t,uint64_t pts,bool idr);
 bool cp_video_pop(cp_video_queue *,uint64_t,uint8_t *,size_t,cp_video_unit *);
 bool cp_video_take_idr_request(cp_video_queue *);
+/* True when an access unit of this size fits without overflowing, with at most
+ * `units` already queued. Used to hold the sender back instead of overflowing. */
+bool cp_video_room(const cp_video_queue *,size_t size,unsigned units);
 /* The phone repeats unchanged parameter sets around every keyframe, so only a
  * real difference may restart the stream. */
 bool cp_video_config_changed(const uint8_t *current,size_t current_size,const uint8_t *next,size_t next_size);

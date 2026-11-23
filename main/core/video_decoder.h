@@ -16,11 +16,12 @@ void cp_decoder_destroy(cp_decoder *);
 bool cp_decoder_reset(cp_decoder *);
 cp_decode_result cp_decoder_decode(cp_decoder *,const uint8_t *annex_b,size_t,uint64_t pts,cp_i420 *);
 /* With a sink, cp_decoder_decode returns once the frame has been parsed, and the
- * sink gets each finished frame in order, on the reconstruction task on the target
- * and before the decode call returns elsewhere. The plane views stay valid and
- * unchanged until the sink returns, and the task decodes nothing meanwhile, so a
- * sink that takes long holds up every later frame. Without a sink the frame is
- * finished when cp_decoder_decode returns. */
+ * sink gets each finished frame in order: on the target on a helper task on the
+ * parsing core, elsewhere before the decode call returns. The plane views stay valid
+ * and unchanged until the sink returns. Reconstruction of later frames continues
+ * meanwhile and waits only before writing into the picture the sink is reading, so
+ * the sink must not touch any other picture. One sink call runs at a time. Without a
+ * sink the frame is finished when cp_decoder_decode returns. */
 typedef void (*cp_frame_sink)(const cp_i420 *,void *context);
 void cp_decoder_set_sink(cp_decoder *,cp_frame_sink,void *context);
 /* Waits for every frame that has been accepted to reach the sink. */

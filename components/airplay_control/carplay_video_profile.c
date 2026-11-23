@@ -6,6 +6,9 @@
 #include "sdkconfig.h"
 static unsigned active=0;
 static bool initialized,fell_back;
+/* A selection made during a session waits for the next one: the running session
+ * keeps the video size, touch layout and /info it started with. */
+static volatile bool pending;
 unsigned carplay_video_profile_count(void) { return sizeof(video_profiles)/sizeof(video_profiles[0]); }
 /* "wanted" remembers the requested height, so a build asking for a new height
  * starts one trial, and one that already fell back does not try again. Probe:
@@ -50,7 +53,15 @@ esp_err_t carplay_video_profile_select(unsigned index) {
     if (err==ESP_OK) err=nvs_set_u8(n,"probe",video_profiles[index].experimental?1:0);
     if (err==ESP_OK) err=nvs_set_u8(n,"fallback",0);
     if (err==ESP_OK) err=nvs_commit(n);
-    nvs_close(n); return err;
+    nvs_close(n);
+    if (err==ESP_OK) pending=true;
+    return err;
+}
+bool carplay_video_profile_session_start(void) {
+    if (!pending) return false;
+    pending=false; initialized=false; fell_back=false;
+    load();
+    return true;
 }
 bool carplay_video_profile_did_fallback(void) { load(); return fell_back; }
 void carplay_video_profile_fallback(void) {

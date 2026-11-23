@@ -4,13 +4,20 @@
 #include "driver/i2c_master.h"
 #include "esp_log.h"
 #include <stdbool.h>
+#include "esp_sleep.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 /* Second PI4IOE5V6408 (0x44), set up as M5Unified does for Tab5:
- * P5 nCHG_QC_EN (output, low selects the 1000 mA step, high 500 mA),
+ * P5 nCHG_QC_EN (output, low selects the 1000 mA step, high 500 mA; 500 mA is
+ *    used, so a laptop port can power the Tab5, the phone and the charger at once),
  * P6 IP2326 BAT_STAT (input; high while charging and while disabled),
  * P7 CHG_EN (output, high = charger on).
  * After reset every pin is high-Z with pull-down, so the charger stays off
  * until firmware drives CHG_EN high. */
+/* P4 PWROFF_PULSE: a pulse asks the power controller to switch the Tab5 off, as a
+ * double press of the power button does. */
+#define POWER_OFF_PULSE IO_EXPANDER_PIN_NUM_4
 #define POWER_CHG_QC   IO_EXPANDER_PIN_NUM_5
 #define POWER_CHG_STAT IO_EXPANDER_PIN_NUM_6
 #define POWER_CHG_EN   IO_EXPANDER_PIN_NUM_7
@@ -36,6 +43,46 @@ static esp_err_t ina226_read(uint8_t reg, uint16_t *value)
         *value = (uint16_t)((data[0] << 8) | data[1]);
     }
     return err;
+}
+
+bool tab5_power_read(tab5_power_reading *out)
+{
+    uint16_t bus = 0, shunt = 0;
+    if (!out || !s_ina226 || ina226_read(INA226_REG_BUS, &bus) != ESP_OK ||
+        ina226_read(INA226_REG_SHUNT, &shunt) != ESP_OK) {
+        return false;
+    }
+    out->battery_mv = (unsigned)bus * INA226_BUS_LSB_UV / 1000;
+    const int shunt_uv = (int)(int16_t)shunt * INA226_SHUNT_LSB_NV / 1000;
+    out->charge_ma = -shunt_uv / INA226_SHUNT_MOHM;
+    /* BAT_STAT is also high while charging is disabled, so the current decides. */
+    out->charging = s_charge_on && out->charge_ma > 20;
+    return true;
+}
+
+void tab5_power_off(void)
+{
+    ESP_LOGW(TAG, "powering off: battery empty");
+    if (s_expander) {
+        esp_io_expander_set_dir(s_expander, POWER_OFF_PULSE, IO_EXPANDER_OUTPUT);
+        esp_io_expander_set_output_mode(s_expander, POWER_OFF_PULSE, IO_EXPANDER_OUTPUT_MODE_PUSH_PULL);
+        /* A short pulse, then a long one in case the controller wants a press-length pulse. */
+        const unsigned widths_ms[] = {100, 1000};
+        for (unsigned i = 0; i < sizeof(widths_ms) / sizeof(widths_ms[0]); ++i) {
+            esp_io_expander_set_level(s_expander, POWER_OFF_PULSE, 0);
+            vTaskDelay(pdMS_TO_TICKS(50));
+            esp_io_expander_set_level(s_expander, POWER_OFF_PULSE, 1);
+            vTaskDelay(pdMS_TO_TICKS(widths_ms[i]));
+            esp_io_expander_set_level(s_expander, POWER_OFF_PULSE, 0);
+            vTaskDelay(pdMS_TO_TICKS(1000));
+        }
+    }
+    /* Still running: the pulse did nothing on this board revision. Stop charging
+     * attempts and sleep with no wake source until the power button is used. */
+    ESP_LOGW(TAG, "PWROFF pulse had no effect; entering deep sleep");
+    bsp_display_brightness_set(0);
+    vTaskDelay(pdMS_TO_TICKS(100));
+    esp_deep_sleep_start();
 }
 
 void tab5_power_log(void)
@@ -77,7 +124,7 @@ esp_err_t tab5_power_init(void)
     if (s_expander) {
         esp_err_t err = esp_io_expander_set_dir(s_expander, POWER_CHG_STAT, IO_EXPANDER_INPUT);
         err |= esp_io_expander_set_dir(s_expander, POWER_CHG_QC, IO_EXPANDER_OUTPUT);
-        err |= esp_io_expander_set_level(s_expander, POWER_CHG_QC, 0);
+        err |= esp_io_expander_set_level(s_expander, POWER_CHG_QC, 1);
         err |= esp_io_expander_set_output_mode(s_expander, POWER_CHG_QC, IO_EXPANDER_OUTPUT_MODE_PUSH_PULL);
         err |= esp_io_expander_set_dir(s_expander, POWER_CHG_EN, IO_EXPANDER_OUTPUT);
         err |= esp_io_expander_set_level(s_expander, POWER_CHG_EN, 1);

@@ -28,7 +28,7 @@ static bool mic_start(void) { return tab5_mic_start()==ESP_OK; }
 esp_err_t tab5_audio_routes_init(void) {
     const airplay_audio_sink sink={
         .open=open_stream,.write=write_stream,.close=close_stream,.duck=tab5_audio_duck,
-        .mic_start=mic_start,.mic_read=tab5_mic_read,.mic_stop=tab5_mic_stop,
+        .mic_start=mic_start,.mic_read=tab5_mic_read,.mic_stop=tab5_mic_stop,.mic_call=tab5_mic_call,
     };
     return airplay_audio_install_sink(&sink)?ESP_OK:ESP_ERR_INVALID_STATE;
 }

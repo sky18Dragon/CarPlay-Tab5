@@ -14,6 +14,8 @@
 #include "esp_log.h"
 #include "sd_log.h"
 #include "esp_heap_caps.h"
+#include "nvs.h"
+#include "board_io.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -26,6 +28,31 @@ static unsigned mux_address,ncm_address,session_address;
 static bool session_stopping;
 static bool discovery_done[128];
 static atomic_uint selected_profile;
+/* The configuration found for a phone model is remembered across restarts. Without
+ * it the first connection after power-up takes a VBUS cycle to select it, which
+ * also drops the phone out of CarPlay mode and costs a second mode switch (~4 s). */
+#define USB_PROFILE_NAMESPACE "tab5_usb"
+static void load_profile(void)
+{
+    nvs_handle_t h; uint32_t value=0;
+    if(nvs_open(USB_PROFILE_NAMESPACE,NVS_READONLY,&h)!=ESP_OK) return;
+    /* Valid: a product ID, a configuration count and a chosen configuration. */
+    if(nvs_get_u32(h,"profile",&value)!=ESP_OK || !(value>>16) || !((value>>8)&255) || !(value&255)) value=0;
+    nvs_close(h);
+    if(value) atomic_store(&selected_profile,value);
+    if(value) ESP_LOGI(TAG,"remembered profile: PID=%04x configurations=%u NCM config=%u",
+                       (unsigned)(value>>16),(unsigned)((value>>8)&255),(unsigned)(value&255));
+}
+static void save_profile(uint32_t value)
+{
+    nvs_handle_t h;
+    if(nvs_open(USB_PROFILE_NAMESPACE,NVS_READWRITE,&h)!=ESP_OK) return;
+    uint32_t stored=0;
+    if(nvs_get_u32(h,"profile",&stored)!=ESP_OK || stored!=value) {
+        if(nvs_set_u32(h,"profile",value)==ESP_OK) nvs_commit(h);
+    }
+    nvs_close(h);
+}
 static atomic_int network_interface=-1;
 /* These limits stop a re-enumeration loop. The phone leaves CarPlay mode on every
  * real detach, so a plug that comes after a quiet period starts with a full budget. */
@@ -65,7 +92,7 @@ static void begin_power_cycle(void)
     atomic_store(&recovery_started_ms,usb_now_ms());
     /* Toggle the board's actual USB-A 5 V supply. Keep the host root port in its
      * normal state so its disconnect/recycle ISR owns the HCD transition. */
-    esp_err_t rc=bsp_feature_enable(BSP_FEATURE_USB,false);
+    esp_err_t rc=tab5_feature_enable(BSP_FEATURE_USB,false);
     if(rc!=ESP_OK) { ESP_LOGE(TAG,"USB VBUS off failed: %s",esp_err_to_name(rc)); return; }
     power_restore_at=esp_timer_get_time()+500000;
     ESP_LOGW(TAG,"USB VBUS off; waiting for DEV_GONE before endpoint cleanup");
@@ -91,7 +118,9 @@ static void discover_transport(unsigned a) {
     }
     if(info.bConfigurationValue!=wanted) {
         if(config_restarts++>=1) { ESP_LOGE(TAG,"Configuration retry limit"); return; }
-        atomic_store(&selected_profile,((unsigned)desc->idProduct<<16)|((unsigned)desc->bNumConfigurations<<8)|wanted);
+        const uint32_t profile=((unsigned)desc->idProduct<<16)|((unsigned)desc->bNumConfigurations<<8)|wanted;
+        atomic_store(&selected_profile,profile);
+        save_profile(profile);
         ESP_LOGI(TAG,"Selecting discovered NCM config=%u by root re-enumeration",wanted);
         begin_power_cycle();
         return;
@@ -180,7 +209,7 @@ void usb_probe_task(void *arg)
         if(power_restore_at && esp_timer_get_time()>=power_restore_at) {
             bool closed=true;for(unsigned a=1;a<128;++a) if(devices[a]) closed=false;
             if(closed) {
-                ESP_ERROR_CHECK(bsp_feature_enable(BSP_FEATURE_USB,true));
+                ESP_ERROR_CHECK(tab5_feature_enable(BSP_FEATURE_USB,true));
                 power_restore_at=0; atomic_store(&recovery_started_ms,0);
                 ESP_LOGI(TAG,"USB VBUS restored; ready for re-enumeration");
             }
@@ -303,7 +332,8 @@ static void usb_daemon(void *arg)
 }
 esp_err_t tab5_usb_start(void)
 {
-    esp_err_t rc = bsp_feature_enable(BSP_FEATURE_USB, true);
+    load_profile();
+    esp_err_t rc = tab5_feature_enable(BSP_FEATURE_USB, true);
     if (rc != ESP_OK) return rc;
     const usb_host_config_t cfg = {.intr_flags = ESP_INTR_FLAG_LOWMED,
         .root_port_unpowered = true, .enum_filter_cb = select_configuration};

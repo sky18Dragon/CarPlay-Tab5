@@ -202,7 +202,12 @@ bool airplay_pairing_store_save_callback(
         }
         if (result == ESP_OK && index == table.count) {
             if (table.count == AIRPLAY_PAIRING_STORE_MAX_CONTROLLERS) {
-                result = ESP_ERR_NO_MEM;
+                /* Records are kept in the order they were added. Forget the
+                 * oldest controller rather than refuse every new one forever;
+                 * it pairs again if it comes back. */
+                memmove(&table.records[0], &table.records[1],
+                        (table.count - 1U) * sizeof(table.records[0]));
+                index = table.count - 1U;
             } else {
                 ++table.count;
             }

@@ -12,7 +12,11 @@ const carplay_video_profile_t *carplay_video_profile_at(unsigned index);
 const carplay_video_profile_t *carplay_video_profile_current(void);
 /* Touch reports use the layout height, not the squeezed video height. */
 unsigned carplay_video_profile_touch_height(void);
+/* Stores a choice for the next session (and boot); the current one is unchanged. */
 esp_err_t carplay_video_profile_select(unsigned index);
+/* Call as each phone session starts: applies a choice made since the last one.
+ * Returns true when the profile was reloaded. */
+bool carplay_video_profile_session_start(void);
 bool carplay_video_profile_did_fallback(void);
 void carplay_video_profile_fallback(void);
 /* An untried experimental profile is a trial: begin returns true at the first

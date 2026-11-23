@@ -4,6 +4,24 @@ cd "$(dirname "$0")/.."
 mkdir -p artifacts
 "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -Itests/pairing_stubs -Imain main/pairing_reset.c tests/test_pairing_reset.c -o artifacts/test_pairing_reset
 ./artifacts/test_pairing_reset
+"${CC:-cc}" -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -Itests/pair_store_stubs -Itests/stubs -Imain main/pair_store.c tests/test_pair_store.c -o artifacts/test_pair_store
+./artifacts/test_pair_store
+"${CC:-cc}" -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -Itests/airplay_store_stubs -Icomponents/airplay_pairing_store/include components/airplay_pairing_store/airplay_pairing_store.c tests/test_airplay_pairing_store.c -o artifacts/test_airplay_pairing_store
+./artifacts/test_airplay_pairing_store
+"${CC:-cc}" -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -Imain main/core/battery.c tests/test_battery.c -o artifacts/test_battery
+./artifacts/test_battery
+for frame in 100 128 160 256 512; do
+    "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -DTAB5_ECHO_HOST_FRAME=$frame -Imain main/echo_cancel.c tests/test_echo_cancel.c -lm -o artifacts/test_echo_bridge
+    ./artifacts/test_echo_bridge
+done
+mkdir -p artifacts/speexdsp
+(cd artifacts/speexdsp && "${CC:-cc}" -std=c11 -O1 -w -fsanitize=address,undefined -g -DFLOATING_POINT -DUSE_KISS_FFT -DEXPORT= \
+    -I../../components/speexdsp/include -I../../components/speexdsp/libspeexdsp \
+    -c ../../components/speexdsp/libspeexdsp/mdf.c ../../components/speexdsp/libspeexdsp/preprocess.c \
+    ../../components/speexdsp/libspeexdsp/filterbank.c ../../components/speexdsp/libspeexdsp/fftwrap.c \
+    ../../components/speexdsp/libspeexdsp/kiss_fft.c ../../components/speexdsp/libspeexdsp/kiss_fftr.c)
+"${CC:-cc}" -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -DTAB5_ECHO_HOST_SPEEX -Imain -Icomponents/speexdsp/include main/echo_cancel.c tests/test_echo_cancel.c artifacts/speexdsp/*.o -lm -o artifacts/test_echo_speex
+./artifacts/test_echo_speex
 "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -Itests/usb_hal_stubs -Itests/stubs main/usb_hal_fix.c tests/test_usb_hal_fix.c -o artifacts/test_usb_hal_fix
 ./artifacts/test_usb_hal_fix
 "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -Imain main/usb_descriptors.c tests/test_usb_descriptors.c -o artifacts/test_usb_descriptors

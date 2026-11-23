@@ -2,6 +2,7 @@
 #include "app_session.h"
 #include <stdatomic.h>
 #include "airplay_software_provider.h"
+#include "carplay_video_profile.h"
 #include "airplay_identity_port.h"
 #include "airplay_rtsp_server.h"
 #include "airplay_audio.h"
@@ -25,6 +26,9 @@ esp_err_t tab5_airplay_start(uint64_t generation)
     /* No erase fallback: preserve existing Lockdown and receiver identities. */
     tab5_entropy_acquire();
     esp_err_t err=nvs_flash_init();
+    /* A picture-quality choice made in Settings applies from this session. */
+    if(err==ESP_OK && carplay_video_profile_session_start())
+        ESP_LOGI("AIRPLAY","video profile now %s",carplay_video_profile_current()->label);
     if(err==ESP_OK) err=airplay_software_provider_init();
     airplay_identity_config_t identity;
     if(err==ESP_OK) err=airplay_identity_port_get_config(&identity);

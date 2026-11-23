@@ -7,4 +7,5 @@ idf_component_register(
 
 foreach(height 192 240 288 360 384 480 576)
     target_add_binary_data(${COMPONENT_LIB} "${CMAKE_CURRENT_SOURCE_DIR}/assets/info_${height}.plist" BINARY)
+    target_add_binary_data(${COMPONENT_LIB} "${CMAKE_CURRENT_SOURCE_DIR}/assets/info_${height}_rhd.plist" BINARY)
 endforeach()

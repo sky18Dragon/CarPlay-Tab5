@@ -28,6 +28,9 @@ void Tab5ReconSettle (PWelsDecoderContext pCtx);
 bool Tab5ReconTakeResult (int32_t* pResult);
 bool Tab5ReconExpandLater (PWelsDecoderContext pCtx);
 uint32_t Tab5ReconLayerSet (PWelsDecoderContext pCtx);
+// Times deblocking, for the video statistics.
+int64_t Tab5ReconClock();
+void Tab5ReconDeblocked (int64_t iStartUs);
 #else
 static inline void Tab5ReconAllow (bool) {}
 static inline void Tab5ReconBegin (PWelsDecoderContext) {}
@@ -38,6 +41,8 @@ static inline void Tab5ReconSettle (PWelsDecoderContext) {}
 static inline bool Tab5ReconTakeResult (int32_t*) { return false; }
 static inline bool Tab5ReconExpandLater (PWelsDecoderContext) { return false; }
 static inline uint32_t Tab5ReconLayerSet (PWelsDecoderContext) { return 0; }
+static inline int64_t Tab5ReconClock() { return 0; }
+static inline void Tab5ReconDeblocked (int64_t) {}
 #endif
 } // namespace WelsDec
 #endif

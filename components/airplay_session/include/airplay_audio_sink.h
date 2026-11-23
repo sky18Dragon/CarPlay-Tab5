@@ -17,5 +17,8 @@ typedef struct {
     bool (*mic_start)(void);
     size_t (*mic_read)(unsigned rate,int16_t *samples,size_t frames);
     void (*mic_stop)(void);
+    /* Optional: true while a telephony uplink uses the microphone, so the
+     * receiver can cancel its own speaker's echo for the far end. */
+    void (*mic_call)(bool active);
 } airplay_audio_sink;
 bool airplay_audio_install_sink(const airplay_audio_sink *sink);

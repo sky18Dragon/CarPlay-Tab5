@@ -9,12 +9,14 @@ This is an independent experimental project, not Apple-certified. **The current 
 ## Features
 
 - USBMUX / Lockdown pairing, TLS, iAP2 and wired CarPlay sessions.
-- 890×240 video targeting 16 fps, scaled by PPA to 1280×720; touch input.
+- 890×240 video targeting 16 fps, scaled by PPA to 1280×720; touch input. Sharper 1024×360 and 1024×576 modes trade frame rate for detail.
 - Music and navigation prompt mixing/ducking, microphone uplink and device-tested Siri.
-- Persistent volume and brightness through the CarPlay “Tab5 设置” settings icon.
-- **Clear pairing** on the waiting screen, with confirmation and disconnected-session checks. Clears only phone trust records.
+- Phone-call echo cancellation (ESP-SR or SpeexDSP, chosen at build time; see below).
+- Tab5 Settings, opened from the CarPlay “Tab5 Settings” icon: volume, brightness, microphone level, picture quality, picture sharpening, screen off when unplugged and right-hand drive (CarPlay dock on the right). All persist.
+- Battery level on the waiting screen and in Settings, a low-battery icon over CarPlay, and a warned, automatic power-off when the pack is empty.
+- **Clear pairing** on the waiting screen, with confirmation and disconnected-session checks. Clears phone trust records and AirPlay pairings, nothing else.
 - USB channel error handling, TX/RX stall detection, port power-cycle recovery and an independent 15-second progress guard.
-- SD runtime/crash logging, charging control and battery operation.
+- SD runtime/crash logging and charging control.
 
 See [v1.0.0 release notes](docs/releases/v1.0.0.md) for validation and limitations.
 
@@ -37,6 +39,16 @@ python3 scripts/fetch_openh264.py
 
 The current main branch includes `identity.pk8`, `certificate.p7b` and `certificate.der` in [secrets/mfi/](secrets/mfi/README.md); see the [acquisition and checksum guide](docs/软件认证接入.md). The original v1.0.0 tag and release attachments retain their original snapshot without these files. Build scripts explicitly set authentication ON/OFF instead of inheriting an old CMake choice.
 
+### Echo cancellation engine
+
+`idf.py menuconfig` → **CarPlay Tab5** → **Echo cancellation for phone calls**:
+
+- **ESP-SR** (default): Espressif's full-duplex echo canceller from `espressif/esp-sr`, fetched by the component manager only when selected. Best quality, but its libraries are closed binaries under the Espressif licence, so a build with it cannot be distributed under the GPL alone.
+- **SpeexDSP**: the BSD-licensed canceller vendored in `components/speexdsp`; use it for builds you share.
+- **None**.
+
+Building with SpeexDSP or None rewrites `dependencies.lock` without ESP-SR; don't commit that change.
+
 Release builds use separate directories and regenerate configuration from tracked defaults:
 
 ```sh
@@ -48,13 +60,21 @@ Output: `artifacts/releases/v1.0.0/{local-auth,no-auth}/`, containing app/full B
 
 ## Flash
 
-Upgrade an existing device by writing **only the app**, preserving pairing and settings:
+**First install on a Tab5** (factory firmware, M5Stack launcher, or any other project): write the full image at **0x0**. It installs this project's bootloader and partition table with the app, and erases saved pairing and settings in its range.
+
+```sh
+python -m esptool --chip esp32p4 -p <port> write_flash 0x0 <release-full.bin>
+```
+
+**Upgrade a Tab5 that already runs CarPlay-Tab5** by writing **only the app**, preserving pairing and settings:
 
 ```sh
 python -m esptool --chip esp32p4 -p <port> write_flash 0x10000 <release-app.bin>
 ```
 
-The `-full.bin` is written at **0x0** for fresh installations only. It replaces the bootloader/partition table and erases existing pairing/settings in its address range. Never interchange the app/full offsets. The release partition table has 24 KiB NVS and a 4 MiB factory app; existing devices do not need their partition table changed for an app upgrade.
+The app-only write is safe only on top of this project's bootloader. Another bootloader may expect a different layout, and the Tab5 then resets in a loop right after `entry 0x4ff29ed0` without showing anything. Recover by writing the full image at 0x0. If unsure, back up first: `python -m esptool --chip esp32p4 -p <port> read_flash 0 0x1000000 tab5-backup.bin`.
+
+Never interchange the app/full offsets. The release partition table has 24 KiB NVS and a 4 MiB factory app; existing CarPlay-Tab5 devices do not need their partition table changed for an app upgrade.
 
 ## Tests and structure
 
@@ -77,12 +97,13 @@ v1.0.0 removes the offline demo, boot audio test, flash-based pairing-reset main
 
 ## Known limitations
 
-- The firmware supports pairing and connecting with one iPhone at a time. To switch phones, use **Clear pairing** on the Tab5 waiting screen before pairing the new iPhone.
-- iPhone 12 Pro Max / iOS 16.1.1 has passed clear/re-pair/video/music testing. iPhone 17 Pro / iOS 26.5 has user-confirmed success after restarting Tab5; failure logs are unavailable.
+- The firmware connects one iPhone at a time and its pairing storage holds about two phones. Pairing a further phone removes the stored records of the others, which then confirm Trust again. **Clear pairing** on the waiting screen still removes everything by hand.
+- iPhone 12 Pro Max / iOS 16.1.1 has passed clear/re-pair/video/music testing, and an iPhone Duo streams video, touch, music and navigation. iPhone 17 Pro / iOS 26.5 once needed a Tab5 restart after Clear pairing; two causes that could block a new phone are fixed, but that case is not re-tested.
 - A previous hour-long music/navigation run had one unrequested disconnect, followed by recovery. Controlled USB recovery tests passed; this is not a zero-disconnect guarantee.
 - Low source resolution and software decoding limit sharpness/frame rate. Music can lower video frame rate; occasional memory-related video rejection has been observed.
-- I2S disable messages may appear on audio start. This board may report `other_watchdog` on cold boot; that alone does not prove a runtime watchdog fault.
-- Wired PCM only. Complete phone-call behavior, echo cancellation, battery endurance and low-battery shutdown are unverified or unfinished. No wireless CarPlay.
+- Wired PCM only. No wireless CarPlay: its first connection needs Bluetooth Classic, which the Tab5's ESP32-C6 radio does not have.
+- Not yet verified on hardware: echo cancellation on a real call, the low-battery power-off (it falls back to deep sleep if the power-off pulse is ignored), and battery endurance.
+- CarPlay's light/dark appearance is set in CarPlay itself (Settings → Appearance), not on the Tab5.
 - Flash/NVS encryption is disabled. The bundled experimental identity is public; keep other private identities, pairing records and local device recordings/logs out of the repository. The default AirPlay Pair-Setup code is `3939`.
 
 ## License
